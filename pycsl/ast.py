@@ -1,3 +1,5 @@
+""" Abstract Syntax Tree: Definition and representation.
+"""
 
 from enum import Enum 
 
@@ -5,6 +7,9 @@ from .tokens import Token, TokenType
 
 
 class DeclNode(Enum):
+    """ Declaration node in Abstract Syntax Tree.
+        Used only when AST.type == ASTType.DECL
+    """
     FUNCDECL = 1    # function declaration
     VARDECL = 2     # variable declaration
     ARRAYDECL = 3   # array declaration
@@ -32,13 +37,11 @@ class AST:
     """ Abstract Syntax Tree
     """
 
-    def __init__(self, mtype, mval=None, nodeval=None, nodes=None, **kwargs):
+    def __init__(self, mtype, mval=None, nodes=None, **kwargs):
         """ mval --> value of self (like operator.name)
-            nodeval --> value of node (like calculation result)
         """
         self.type = mtype
         self.value = mval 
-        self.nodeval = nodeval
         self.attr = kwargs
         self.nodes = [] if not nodes else nodes 
 
@@ -52,13 +55,14 @@ class AST:
         """ Add a child.
         """
         self.nodes.append(child)
-
-    def is_term(self):
-        return len(nodes) == 0
         
 
 def token2ast(token:Token):
-    
+    """ Convert token to AST node.
+        The type of token is limited in
+        NONE, VAL, NAME, OP, TYPE, CTRL
+    """
+
     ConvertTable = {
         TokenType.NONE: ASTType.NONE,
         TokenType.VAL: ASTType.VAL,
@@ -81,7 +85,7 @@ class ASTBuilder:
 
     def _checkinit(self, node):
         if self.ast is None:
-            self.ast = self.translate(node)
+            self.ast = self._translate(node)
             self.curast = self.ast
             return True 
         else:
@@ -93,7 +97,7 @@ class ASTBuilder:
         if self._checkinit(child):
             pass 
         else:
-            self.curast.append(self.translate(child))
+            self.curast.append(self._translate(child))
 
     def ext_child(self, child):
         """ Add child, and move ptr to child.
@@ -101,7 +105,7 @@ class ASTBuilder:
         if self._checkinit(child):
             pass 
         else:
-            self.curast.append(self.translate(child))
+            self.curast.append(self._translate(child))
             self.curast = self.curast.nodes[-1]
 
     def ext_parent(self, parent):
@@ -110,12 +114,14 @@ class ASTBuilder:
         if self._checkinit(parent):
             pass 
         else:
-            newast = self.translate(parent)
+            newast = self._translate(parent)
             newast.append(self.ast)
             self.ast = newast        
             self.curast = self.ast
 
-    def translate(self, obj):
+    def _translate(self, obj):
+        """ Try converting the object into AST.
+        """
         if isinstance(obj, AST):
             return obj 
         elif isinstance(obj, Token):

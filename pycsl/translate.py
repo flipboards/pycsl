@@ -8,40 +8,8 @@ from .ast import AST, ASTType, DeclNode
 from .grammar.operators import Operator, OpAryLoc, OpAsnLoc
 from .grammar.basic_types import ValType, Value
 from .tokens import Symbol
-from .ir import IR, Variable, Function, SpecialCode, Scope
+from .ir import IR, Code, Variable, Function, Scope, op2code
 from .errors import CompileError
-
-
-AsnOpLoc = {
-    Operator.ADDASN: Operator.ADD,
-    Operator.SUBASN: Operator.SUB,
-    Operator.MULASN: Operator.MUL,
-    Operator.DIVASN: Operator.DIV,
-    Operator.REMASN: Operator.REM,
-    Operator.POWASN: Operator.POW,
-    Operator.INC: Operator.ADD,
-    Operator.DEC: Operator.SUB,
-    Operator.POSTINC: Operator.ADD,
-    Operator.POSTDEC: Operator.SUB
-}
-
-
-def printir(ir:IR):
-    
-    if ir.code is None: # direct assignment
-        print('%s = %s' % (ir.ret, ir.first))
-
-    else:
-        if ir.ret is None:
-            if ir.second is None:
-                print('%s %s' % (ir.code, ir.first))
-            else:
-                print('%s %s %s' % (ir.code, ir.first, ir.second))
-        else:
-            if ir.second is not None:
-                print('%s = %s %s %s' % (ir.ret, ir.code, ir.first, ir.second))
-            else:
-                print('%s = %s %s' % (ir.ret, ir.code, ir.first))
 
 
 class IRBuilder:
@@ -53,7 +21,19 @@ class IRBuilder:
         self.reg_count = 0      # index of unnamed variable
 
     def translate(self, ast:AST):
-        pass 
+        """ Translate the whole block
+        """
+        assert ast.type == ASTType.ROOT
+
+        for node in ast.nodes:
+            if node.type == ASTType.DECL:
+                self._translate_decl(node)
+            elif node.type == ASTType.FUNC:
+                # translate function definition
+                pass 
+            else:
+                raise CompileError("Invalid code")
+
     
     def translate_line(self, ast:AST):
         """ Translate the ast that generate by a line of code.
@@ -102,6 +82,11 @@ class IRBuilder:
         else:
             raise RuntimeError()
 
+    def _translate_constexpr(self, ast:AST):
+        """ Constant expression: Numbers, operators (without member/sub/assignment)
+        """
+        pass 
+
     def _translate_op(self, ast:AST):
 
         def translate_subscript(mast, subarray):
@@ -119,39 +104,36 @@ class IRBuilder:
             subarray = []
             valarr = translate_subscript(mast, subarray)
             valptr = self.create_reg()
-            self.write(SpecialCode.GETPTR, valptr, valarr, subarray)  # %valptr = getptr %valarr %subarray
+            self.write(Code.GETPTR, valptr, valarr, subarray)  # %valptr = getptr %valarr %subarray
             return valptr
 
-        if OpAryLoc[ast.value] != len(ast.nodes):
-            raise CompileError('Operator ary not match: %r' % ast.value)
+        operator = ast.value
+        if OpAryLoc[operator] != len(ast.nodes):
+            raise CompileError('Operator ary not match: %r' % operator)
 
         ## This is for array indexing in RHS
         ## ptr = GETPTR(a, b)
         ## ret = LOAD ptr
-        if ast.value == Operator.LSUB:
+        if operator == Operator.LSUB:
             valptr = translate_array_index(ast)
             valret = self.create_reg()
-            self.write(SpecialCode.LOAD, valret, valptr)  # %valret = load %valptr
+            self.write(Code.LOAD, valret, valptr)  # %valret = load %valptr
             return valret 
 
+        try:
+            code = op2code(operator)
+        except KeyError:
+            raise CompileError("Operator %s not valid" % operator)
+
         # ASSIGNMENT
-        if OpAsnLoc[ast.value]:
+        if OpAsnLoc[operator]:
             
             ## TODO: ADD MEMBER OPERATOR (.)
 
             islvalarray = (ast.nodes[0].value == Operator.LSUB)
 
-            ## REALOP: Real arithmetic operator; If op == '=' then realop is None
-            if ast.value != Operator.ASN:
-                try:
-                    realop = AsnOpLoc[ast.value]
-                except KeyError:
-                    raise CompileError('Invalid assign operator: %r' % ast.value)
-            else:
-                realop = None  
-
             ## =, +=, -=
-            if OpAryLoc[ast.value] == 2:
+            if OpAryLoc[operator] == 2:
                 val1 = self._translate_expr(ast.nodes[1])
 
                 ## Special Case: a[b] = c
@@ -160,18 +142,18 @@ class IRBuilder:
                 if islvalarray:
                     valptr = translate_array_index(ast.nodes[0])
 
-                    if realop is not None:
+                    if code is not None:
                         
                         # val0 = LOAD valptr
                         val0 = self.create_reg()
-                        self.write(SpecialCode.LOAD, val0, valptr)
+                        self.write(Code.LOAD, val0, valptr)
 
                         valret = self.create_reg() # stores the calculation result
-                        self.write(realop, valret, val0, val1)
-                        self.write(SpecialCode.STORE, None, valret, valptr)
+                        self.write(code, valret, val0, val1)
+                        self.write(Code.STORE, None, valret, valptr)
                         return valret
                     else:
-                        self.write(SpecialCode.STORE, None, val1, valptr)    # store retaddr val1
+                        self.write(Code.STORE, None, val1, valptr)    # store retaddr val1
                         return val1
                 
                 ## Trivial case
@@ -181,8 +163,8 @@ class IRBuilder:
                     #if not isinstance(val0, Symbol):
                     #    raise CompileError('%r cannot be lvalue' % val0)
 
-                    if realop is not None:
-                        self.write(realop, val0, val0, val1) # val0 = val0 + val1
+                    if code is not None:
+                        self.write(code, val0, val0, val1) # val0 = val0 + val1
                     else:
                         self.write(None, val0, val1)  # val0 = val1
                     return val0
@@ -194,50 +176,51 @@ class IRBuilder:
                     valptr = translate_array_index(ast.nodes[0])
 
                     val0 = self.create_reg()
-                    self.write(SpecialCode.LOAD, val0, valptr)
+                    self.write(Code.LOAD, val0, valptr)
 
                     valret = self.create_reg()
                     self.write(realop, valret, val0, Value(val0.type, 1))
 
-                    self.write(SpecialCode.STORE, None, valret, valptr)
+                    self.write(Code.STORE, None, valret, valptr)
 
-                    if ast.value in (Operator.INC, Operator.DEC):
+                    if operator in (Operator.INC, Operator.DEC):
                         return valret 
-                    elif ast.value in (Operator.POSTINC, Operator.POSTDEC):
+                    elif operator in (Operator.POSTINC, Operator.POSTDEC):
                         return val0 
 
 
                 else:
                     val0 = self._translate_expr(ast.nodes[0])
 
-                    if ast.value in (Operator.INC, Operator.DEC):
-                        self.write(realop, val0, val0, Value(val0.type, 1))
+                    if operator in (Operator.INC, Operator.DEC):
+                        self.write(code, val0, val0, Value(val0.type, 1))
                         return val0 
 
-                    elif ast.value in (Operator.POSTINC, Operator.POSTDEC):
+                    elif operator in (Operator.POSTINC, Operator.POSTDEC):
                         ret = self.create_reg()
                         self.write(None, ret, val0)
-                        self.write(realop, val0, val0, Value(val0.type, 1))
+                        self.write(code, val0, val0, Value(val0.type, 1))
                         return ret 
 
                     else:
                         raise RuntimeError()
         else:
-            if OpAryLoc[ast.value] == 2:
+            if OpAryLoc[operator] == 2:
                 val1 = self._translate_expr(ast.nodes[1])
                 val0 = self._translate_expr(ast.nodes[0])
                 ret = self.create_reg()
-                self.write(ast.value, ret, val0, val1)
+                self.write(code, ret, val0, val1)
             else:   # -, not
                 val0 = self._translate_expr(ast.nodes[0])
                 ret = self.create_reg()
-                self.write(ast.value, ret, val0, None)
+                self.write(code, ret, val0, None)
             return ret 
         
 
     def _translate_var(self, ast:AST):
         """ Translate a name
         """
+        assert ast.type == ASTType.NAME
 
         varname = ast.value.name 
 
@@ -253,7 +236,7 @@ class IRBuilder:
 
     def _translate_funcall(self, ast:AST):
         
-        # assert ast.type == ASTType.CALL
+        assert ast.type == ASTType.CALL
         
         args = [self._translate_expr(node) for node in ast.nodes[1:]]
         if ast.nodes[0].type != ASTType.NAME:
@@ -267,7 +250,7 @@ class IRBuilder:
             raise CompileError('Cannot call variable %s' % funname)
 
         ret = self.create_reg()
-        self.write(SpecialCode.CALL, ret, self.global_sym_table[funname], args)
+        self.write(Code.CALL, ret, self.global_sym_table[funname], args)
         return ret 
 
 
@@ -285,15 +268,41 @@ class IRBuilder:
 
         
     def _translate_decl_elem(self, ast:AST, typename):
-        
+        """ Translate a single definition.
+            ast: The definition element;
+            typename: ValType instance.
+        """
+
+        def translate_init_list(mast, coord, inits):
+            """ Translation initialzation list.
+                inits: List of tuple (coord, val) (for return)
+            """
+            for i, node in enumerate(mast.nodes):
+                if node.type == ASTType.LIST:
+                    translate_init_list(node, coord + [i], inits)
+                else:
+                    inits.append((coord, self._translate_expr(node)))
+
+        def unflat(val:int, dim, coord):
+            """ coord: list for return
+            """
+            if len(dim) > 1:
+                coord.append(val//dim[0])
+                unflat(val%dim[0], dim[1:], coord)
+            elif len(dim) == 1:
+                if val > dim[0]:
+                    raise CompileError("Too much value in initialization list")
+                coord.append(val)
+
+
         assert ast.type == ASTType.DECL and ast.value == DeclNode.DECLELEM
         assert len(ast.nodes) >= 1
         assert ast.nodes[0].type == ASTType.NAME
 
         varname = ast.nodes[0].val
-        arraylen = []
+        arrshape = []
 
-        # array
+        ## array shape
         if len(ast.nodes[0].nodes) > 0:
             for node in ast.nodes[0].nodes[1]:
                 newdimlen = self._translate_expr(node) # must be const node?
@@ -301,56 +310,40 @@ class IRBuilder:
                     # type cast / raise error
                     pass 
 
-        var = self.create_var(varname, typename if not arraylen else (typename, len(arraylen)))
+        # type = (typename, shape)
+        var = self.create_var(varname, typename if not arrshape else (typename, len(arrshape)))
 
         # declaration only
         if len(ast.nodes) == 1:
-            self.write(SpecialCode.DEFINE, var, (typename, arraylen), None)
+            self.write(Code.DECL, var, (typename, arrshape), None) # this is actually unnecessary for local variables
+
+        # declaration of single variable
+        elif not arrshape:
+            if ast.nodes[1].type == ASTType.LIST:
+                raise CompileError('Variable %s cannot be initialized by list' % varname)
+            self.write(Code.DECL, var, (typename, arrshape), self._translate_expr(ast.nodes[1]))
+
+        # array initialization
         else:
-            # single variable: direct initialization
-            if not arraylen:
-                if ast.nodes[1].type == ASTType.LIST:
-                    raise CompileError('Variable %s cannot be initialized by list' % varname)
-                self.write(SpecialCode.DEFINE, var, (typename, arraylen), self._translate_expr(ast.nodes[1]))
-            # array
-            else:
-                if ast.nodes[1].type != ASTType.LIST:
-                    raise CompileError('Array must be initialized by list')
-                self.write(SpecialCode.DEFINE, var, (typename, arraylen), None)
+            if ast.nodes[1].type != ASTType.LIST:
+                raise CompileError('Array must be initialized by list')
+            self.write(Code.DECL, var, (typename, arrshape), None)
 
-                # fill 0 for the whole array
+            # fill 0 for the whole array here
 
-                def unflat(marraylen, x):
-                    return []
+            inits = []
+            translate_init_list(ast.nodes[1], [], inits)
+            for coord, val in inits:
+                # lower dimension
+                if len(coord) < len(arrshape):
+                    cvt_coord = coord[:-1]
+                    unflat(coord[-1], arrshape[len(coord)-1:], cvt_coord)
+                else:
+                    cvt_coord = coord
 
-                def fill(mast, marraylen, coord):
-                    
-                    # recursive until a single bracket
-
-                    if mast.nodes[0].type != ASTType.LIST:
-                        
-                        # we perform no check here. Assume every child is not list
-                        
-                        if len(mast.nodes) > product(arraylen):
-                            raise CompileError('Initialization list too long')
-
-                        for i in range(len(mast.nodes)):
-
-                            ptr = self.create_reg()
-                            self.write(SpecialCode.LOAD, ptr, var, coord + unflat(marraylen, i))
-                            self.write(SpecialCode.STORE, None, self._translate_expr(mast.nodes[i]), ptr)   # actually translate_const_expr here, where the value will be calculated
-
-                    else:
-                        
-                        if len(marraylen) == 1:
-                            raise CompileError('Dimension too high')
-
-                        for i in range(len(mast.nodes)):
-                            
-                            fill(mast.nodes[i], marraylen[1:], coord + [i])
-
-                if len(ast.nodes[1].nodes) > 0: # c++ style initialization is allowed: int a[2] = {};
-                    fill(ast.nodes[1], arraylen, [])
+                ptr = self.create_reg()
+                self.write(Code.GETPTR, ptr, var, cvt_coord)
+                self.write(Code.STORE, None, val, ptr)   # actually translate_const_expr here, where the value will be calculated
 
 
     def create_reg(self, mtype=None):

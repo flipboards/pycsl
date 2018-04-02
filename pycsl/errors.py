@@ -1,5 +1,5 @@
-
-
+""" Errors raised in pyscl
+"""
 
 class SynError(RuntimeError):
     """ General syntax error

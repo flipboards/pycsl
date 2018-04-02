@@ -2,19 +2,10 @@
 """
 
 from enum import Enum
+from collections import namedtuple
 
-
-class Symbol:
-    """ Represent a symbol. Note: only store left value here.
-    """
-
-    def __init__(self, name):
-        
-        self.name = name 
-        self.val = None # Left value!!!!
-
-    def __repr__(self):
-        return '[Symbol %s: %r]' % (self.name, self.val)
+# A simple wrapper for string
+Symbol = namedtuple('Symbol', ['name'])
 
 
 class TokenType(Enum):

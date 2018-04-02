@@ -3,18 +3,19 @@ from . import lex
 
 from .util import ioutil
 from .errors import SynError
-from .tokens import Token, Symbol, TokenType
+from .tokens import Token, TokenType, Symbol
 
 from .grammar.keywords import Keyword, Separator
 from .grammar.basic_types import Value
 from .grammar.operators import Operator, precedence, OpAryLoc, OpAssoLoc, OpAsso 
 
-from .ast import ASTBuilder, AST, ASTType, DeclNode, token2ast
+from .ast import AST, ASTType, ASTBuilder, DeclNode, token2ast
 
 
 class Parser:
     """
-    The main parser for CSL. See syntax.txt for details.
+    The main parser for CSL.
+    Using recursive descent here (except for operators, where LR(1) is applied).
     """
 
     def __init__(self):
@@ -22,10 +23,11 @@ class Parser:
         self.next_token = None 
         self.next_look_token = None 
         self.lexer = lex.Lexer()
-        self.output = ioutil.StrWriter()
         self.aststack = []
 
     def clear(self):
+        """ Clear token, tokenbuffer, aststack, lex.
+        """
         self.cur_token = None
         self.next_token = None    
         self.next_look_token = None   
@@ -34,7 +36,7 @@ class Parser:
 
     def parse(self, ifile):
         """ Parse a file containing functions.
-            Returns a list containing ASTs.
+            Returns an AST with node as ROOT.
         """
         self.clear()
         self.lexer.load(ifile)
@@ -62,6 +64,8 @@ class Parser:
     def parse_line(self, ifile):
         """ Parse simple expression & statement.
             Returns the AST.
+
+            Notice: Only part before semicolon ';' is parsed.
         """
         self.clear()
         self.lexer.load(ifile)
@@ -182,8 +186,7 @@ class Parser:
             return mast 
             
         # continue/break
-        elif self.match(TokenType.CTRL, lambda x:x in [
-            Keyword.CONTINUE, Keyword.BREAK]):
+        elif self.match(TokenType.CTRL, lambda x:x in (Keyword.CONTINUE, Keyword.BREAK)):
             return token2ast(self.cur_token)
 
         # return
@@ -197,6 +200,7 @@ class Parser:
 
         elif self.match_noget(TokenType.SEP, lambda x:x == Separator.LCPD):
             return self._parse_compound_stmt()
+
         else:
             mast = self._parse_expr()
             self.force_match(TokenType.EOL)
