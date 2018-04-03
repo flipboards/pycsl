@@ -133,10 +133,9 @@ def printast(root:AST, indent='\t', level=0):
     """
     if root.value is None:
         print('%s%s' % (indent * level, root.type))
-    elif root.nodeval is None:
-        print('%s%s' % (indent * level, root.value))
     else:
-        print('%s%s (%r)' % (indent * level, root.value, root.nodeval))
+        print('%s%s' % (indent * level, root.value))
+
 
     for node in root.nodes:
         printast(node, indent, level+1)

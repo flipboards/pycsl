@@ -61,7 +61,7 @@ def op2code(op:Operator):
         Operator.INC: Code.ADD,
         Operator.DEC: Code.SUB,
         Operator.POSTINC: Code.ADD,
-        Operator.POSTDEC: Code.SUB
+        Operator.POSTDEC: Code.SUB,
         Operator.AND: Code.AND,
         Operator.OR: Code.OR,
         Operator.XOR: Code.XOR,
@@ -103,8 +103,8 @@ Function = namedtuple('Function', ['name', 'rettype', 'args'])
 class Scope:
     """ Variable scope
     """
-    LOCAL = 0
-    GLOBAL = 1
+    GLOBAL = 0
+    LOCAL = 1
 
 
 def printir(ir:IR):

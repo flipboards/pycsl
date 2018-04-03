@@ -69,6 +69,9 @@ class IRBuilder:
         else:
             self._translate_expr(ast)
 
+    def _translate_ctrl(self, ast:AST):
+        pass 
+
     def _translate_expr(self, ast:AST):
         
         if ast.type == ASTType.OP:
@@ -87,7 +90,7 @@ class IRBuilder:
         """
         pass 
 
-    def _translate_op(self, ast:AST):
+    def _translate_op(self, ast:AST, isconst=False, islazy=False):
 
         def translate_subscript(mast, subarray):
             if mast.value != Operator.LSUB:
@@ -242,7 +245,7 @@ class IRBuilder:
         if ast.nodes[0].type != ASTType.NAME:
             raise CompileError('Not a function: %s' % ast.nodes[0].value)
         
-        funname = ast.nodes[0].val.name
+        funname = ast.nodes[0].value.name
 
         if not funname in self.global_sym_table:
             raise CompileError('Function %s has not declared' % funname)
@@ -257,7 +260,7 @@ class IRBuilder:
     def _translate_decl(self, ast:AST):
         """ Translate variable decalaration
         """
-        assert len(ast.value) == DeclNode.VARDECL
+        assert ast.value == DeclNode.VARDECL
         assert ast.nodes[0].type == ASTType.TYPE
 
         if len(ast.nodes) < 2:
@@ -281,7 +284,7 @@ class IRBuilder:
                 if node.type == ASTType.LIST:
                     translate_init_list(node, coord + [i], inits)
                 else:
-                    inits.append((coord, self._translate_expr(node)))
+                    inits.append((coord + [i], self._translate_expr(node)))
 
         def unflat(val:int, dim, coord):
             """ coord: list for return
@@ -290,8 +293,6 @@ class IRBuilder:
                 coord.append(val//dim[0])
                 unflat(val%dim[0], dim[1:], coord)
             elif len(dim) == 1:
-                if val > dim[0]:
-                    raise CompileError("Too much value in initialization list")
                 coord.append(val)
 
 
@@ -299,16 +300,20 @@ class IRBuilder:
         assert len(ast.nodes) >= 1
         assert ast.nodes[0].type == ASTType.NAME
 
-        varname = ast.nodes[0].val
+        varname = ast.nodes[0].value.name
         arrshape = []
 
         ## array shape
         if len(ast.nodes[0].nodes) > 0:
-            for node in ast.nodes[0].nodes[1]:
+            for node in ast.nodes[0].nodes:
                 newdimlen = self._translate_expr(node) # must be const node?
                 if newdimlen.type != ValType.INT:
                     # type cast / raise error
                     pass 
+                newlen = newdimlen.val; # this should be int
+                if not isinstance(newlen, int):
+                    raise RuntimeError()
+                arrshape.append(newlen)
 
         # type = (typename, shape)
         var = self.create_var(varname, typename if not arrshape else (typename, len(arrshape)))
@@ -340,6 +345,10 @@ class IRBuilder:
                     unflat(coord[-1], arrshape[len(coord)-1:], cvt_coord)
                 else:
                     cvt_coord = coord
+
+                for c, s in zip(cvt_coord, arrshape):
+                    if c >= s:
+                        raise CompileError("Too much value in initialization list")
 
                 ptr = self.create_reg()
                 self.write(Code.GETPTR, ptr, var, cvt_coord)
