@@ -38,8 +38,9 @@ class Code(Enum):
     LE = 20
     GT = 21
     GE = 22
-    CALL = 23
-    DECL = 24
+    PHI = 23
+    CALL = 24
+    DECL = 25
 
 
 def op2code(op:Operator):
@@ -90,6 +91,8 @@ class IR:
         self.second = second 
         self.cond = cond 
 
+
+Label = namedtuple('Label', ['name', 'lineno'])
 
 # Stores meta data of a variable
 # type: ValType

@@ -5,9 +5,12 @@ typenames = ['int', 'float', 'str']
 
 class ValType(Enum):
         
-    INT = 0
-    FLOAT = 1
-    STR = 2
+    VOID = 0
+    BOOL = 1
+    CHAR = 2
+    INT = 3
+    FLOAT = 4
+    STR = 5
 
 TypenameLoc = dict(zip(typenames, ValType))
 

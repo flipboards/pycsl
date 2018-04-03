@@ -1,14 +1,15 @@
 
 from numpy import product
-
 from enum import Enum
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 
-from .ast import AST, ASTType, DeclNode
 from .grammar.operators import Operator, OpAryLoc, OpAsnLoc
 from .grammar.basic_types import ValType, Value
+from .grammar.keywords import Keyword
+
 from .tokens import Symbol
-from .ir import IR, Code, Variable, Function, Scope, op2code
+from .ast import AST, ASTType, DeclNode
+from .ir import IR, Code, Label, Variable, Function, Scope, op2code
 from .errors import CompileError
 
 
@@ -17,8 +18,19 @@ class IRBuilder:
     def __init__(self):
         self.global_sym_table = dict()
         self.sym_table_stack = [dict()]    # global symbol table
-        self.ir_stack = []
+        self.functions = OrderedDict()
+        self.functions['@global'] = []
+        self.curirstack = self.functions['@global']
+        self.functions[self.curfunc] = []
         self.reg_count = 0      # index of unnamed variable
+        self.label_count = 0
+        self.looplabelstack = []
+
+    def clear(self):
+        self.curirstack.clear()
+        self.looplabelstack.clear()
+        self.reg_count = 0
+        self.label_count = 0
 
     def translate(self, ast:AST):
         """ Translate the whole block
@@ -41,8 +53,7 @@ class IRBuilder:
             expression and variable declaration.
             All varaible are treated as global.
         """
-        self.ir_stack.clear()
-        self.reg_count = 0
+        self.clear()
 
         if ast.type == ASTType.DECL:
             self._translate_decl(ast)
@@ -70,34 +81,112 @@ class IRBuilder:
             self._translate_expr(ast)
 
     def _translate_ctrl(self, ast:AST):
-        pass 
+        ## TODO: Check empty loop
+        if ast.value == Keyword.IF:
+            lbltrue = self.create_label()
+            lblfalse = self.create_label()
 
-    def _translate_expr(self, ast:AST):
+            varcond = self._translate_expr(ast.nodes[0]) ## TODO: Type check
+            self.write(Code.BR, None, lbltrue, lblfalse, cond=varcond)
+            self.insert_label(lbltrue)
+            self._translate_stmt(ast.nodes[1])
+
+            if len(ast.nodes) == 3:
+                lblend = self.create_label()
+                self.write(Code.BR, None, lblend)
+                self.insert_label(lblfalse)
+                self._translate_stmt(ast.nodes[2])
+                self.write(Code.BR, None, lblend)
+                self.insert_label(lblend)
+            else:
+                self.write(Code.BR, None, lblfalse)
+                self.insert_label(lblfalse)
+
+        elif ast.value == Keyword.WHILE:
+            lblbegin = self.create_label()
+            lblloop = self.create_label()
+            lblend = self.create_label()
+
+            self.insert_label(lblbegin)
+            self.looplabelstack.append((lblbegin, lblend))
+            varcond = self._translate_expr(ast.nodes[0])
+            self.write(Code.BR, None, lblloop, lblend, cond=varcond)
+            self.insert_label(lblloop)
+            self._translate_stmt(ast.nodes[1])
+            self.write(Code.BR, None, lblbegin)
+            self.insert_label(lblend)
+            self.looplabelstack.pop()
+
+        elif ast.value == Keyword.FOR:
+            lblbegin = self.create_label()
+            lblloop = self.create_label()
+            lblctn = self.create_label()
+            lblend = self.create_label()
+
+            self._translate_expr(ast.nodes[0])
+            self.insert_label(lblbegin)
+            self.looplabelstack.append((lblctn, lblend))
+            varcond = self._translate_expr(ast.nodes[1])
+            self.write(Code.BR, None, lblloop, lblend, cond=varcond)
+            self.insert_label(lblloop)
+            self._translate_stmt(ast.nodes[3])
+            self.write(Code.BR, None, lblctn)
+            self.insert_label(lblctn)
+            self._translate_expr(ast.nodes[2])
+            self.write(Code.BR, None, lblbegin)
+            self.insert_label(lblend)
+            self.looplabelstack.pop()
+        
+        elif ast.value == Keyword.BREAK:
+            if not self.looplabelstack:
+                raise CompileError('"break" must be inside loop')
+            self.write(Code.BR, None, self.looplabelstack[-1][1])
+
+        elif ast.value == Keyword.CONTINUE:
+            if not self.looplabelstack:
+                raise CompileError('"continue" must be inside loop')
+            self.write(Code.BR, None, self.looplabelstack[-1][0])
+
+        elif ast.value == Keyword.RETURN:
+            if not ast.nodes:
+                self.write(Code.RET, None, Value(ValType.VOID, None))
+            else:
+                varret = self._translate_expr(ast.nodes[0])
+                self.write(Code.RET, None, varret)
+
+    def _translate_expr(self, ast:AST, asn=True, lazyeval=False, isconst=False):
+        """ Translate basic expression.
+            asn: Allow assignment;
+            lazyeval: Generate short-circuit code for and/or. But is recommended to 
+                turn off this option here and let optimizer do this task.
+            isconst: Requires Values / non-assignment operators only;
+        """
         
         if ast.type == ASTType.OP:
-            return self._translate_op(ast)
+            return self._translate_op(ast, asn, lazyeval, isconst)
         elif ast.type == ASTType.VAL:
             return ast.value
         elif ast.type == ASTType.NAME:
+            if isconst:
+                raise CompileError("Constant expression required") ## TODO: 'const' keyword required
             return self._translate_var(ast)
         elif ast.type == ASTType.CALL:
+            if isconst:
+                raise CompileError("Constant expression required")
             return self._translate_funcall(ast)
         else:
-            raise RuntimeError()
+            raise RuntimeError()         
 
-    def _translate_constexpr(self, ast:AST):
-        """ Constant expression: Numbers, operators (without member/sub/assignment)
-        """
-        pass 
-
-    def _translate_op(self, ast:AST, isconst=False, islazy=False):
+    def _translate_op(self, ast:AST, *args):
 
         def translate_subscript(mast, subarray):
+            """ Translate continues subscripts. Notice: assignment is not allowed in indexing.
+            """
             if mast.value != Operator.LSUB:
-                return self._translate_expr(mast)
+                return self._translate_expr(mast, False, *args[1:])
             else:
                 lhs = translate_subscript(mast.nodes[0], subarray)
-                subarray.append(self._translate_expr(mast.nodes[1]))
+                subarray.append(self._translate_expr(mast.nodes[1], False, *args[1:]))
                 return lhs 
 
         def translate_array_index(mast):
@@ -109,6 +198,8 @@ class IRBuilder:
             valptr = self.create_reg()
             self.write(Code.GETPTR, valptr, valarr, subarray)  # %valptr = getptr %valarr %subarray
             return valptr
+
+        asn, lazyeval, isconst = *args 
 
         operator = ast.value
         if OpAryLoc[operator] != len(ast.nodes):
@@ -122,6 +213,7 @@ class IRBuilder:
             valret = self.create_reg()
             self.write(Code.LOAD, valret, valptr)  # %valret = load %valptr
             return valret 
+        ## TODO: ADD MEMBER OPERATOR (.)
 
         try:
             code = op2code(operator)
@@ -131,13 +223,14 @@ class IRBuilder:
         # ASSIGNMENT
         if OpAsnLoc[operator]:
             
-            ## TODO: ADD MEMBER OPERATOR (.)
+            if not asn or isconst:
+                raise CompileError("Assignment is not allowed")
 
             islvalarray = (ast.nodes[0].value == Operator.LSUB)
 
             ## =, +=, -=
             if OpAryLoc[operator] == 2:
-                val1 = self._translate_expr(ast.nodes[1])
+                val1 = self._translate_expr(ast.nodes[1], *args)
 
                 ## Special Case: a[b] = c
                 ## ptr = GETPTR(a, b)
@@ -161,7 +254,7 @@ class IRBuilder:
                 
                 ## Trivial case
                 else:
-                    val0 = self._translate_expr(ast.nodes[0])
+                    val0 = self._translate_expr(ast.nodes[0], *args)
 
                     #if not isinstance(val0, Symbol):
                     #    raise CompileError('%r cannot be lvalue' % val0)
@@ -208,17 +301,48 @@ class IRBuilder:
                     else:
                         raise RuntimeError()
         else:
+            val0 = self._translate_expr(ast.nodes[0], *args)
             if OpAryLoc[operator] == 2:
-                val1 = self._translate_expr(ast.nodes[1])
-                val0 = self._translate_expr(ast.nodes[0])
+
+                if lazyeval and operator in (Operator.AND, Operator.OR):
+                    return self._translate_lazyevalbool(code, val0, ast.nodes[1], *args)
+
+                val1 = self._translate_expr(ast.nodes[1], *args)
                 ret = self.create_reg()
                 self.write(code, ret, val0, val1)
             else:   # -, not
-                val0 = self._translate_expr(ast.nodes[0])
                 ret = self.create_reg()
-                self.write(code, ret, val0, None)
+                self.write(code, ret, val0)
             return ret 
         
+    def _translate_lazyevalbool(self, code, vallhs, astrhs, *args):
+
+        lblprev = self.get_last_label() # get last label inserted
+        lblrhs = self.create_label()
+        lblskip = self.create_label()
+
+        if code == Code.AND:
+            self.write(Code.BR, None, lblrhs, lblskip, cond=vallhs)
+            self.insert_label(lblrhs)
+            valrhs = self._translate_expr(astrhs, *args)
+            self.write(Code.BR, None, lblskip)
+            self.insert_label(lblskip)
+            valret = self.create_reg()
+            self.write(Code.PHI, valret, (vallhs, lblprev), (valrhs, lblrhs))
+            return valret
+
+        elif code == Code.OR:
+            self.write(Code.BR, None, lblskip, lblrhs, cond=vallhs)
+            self.insert_label(lblrhs)
+            valrhs = self._translate_expr(astrhs, *args)
+            self.write(Code.BR, None, lblskip)
+            self.insert_label(lblskip)
+            valret = self.create_reg()
+            self.write(Code.PHI, valret, (vallhs, lblprev), (valrhs, lblrhs))
+            return valret
+
+        else:
+            raise RuntimeError()
 
     def _translate_var(self, ast:AST):
         """ Translate a name
@@ -306,7 +430,7 @@ class IRBuilder:
         ## array shape
         if len(ast.nodes[0].nodes) > 0:
             for node in ast.nodes[0].nodes:
-                newdimlen = self._translate_expr(node) # must be const node?
+                newdimlen = self._translate_expr(node, asn=False) # must be const node?
                 if newdimlen.type != ValType.INT:
                     # type cast / raise error
                     pass 
@@ -382,7 +506,17 @@ class IRBuilder:
         return var           
 
 
-    def write(self, op, ret, first=None, second=None):
+    def create_label(self):
+        label = Label('%d' % self.label_count, None)
+        self.label_count += 1
+        return label
 
-        self.ir_stack.append(IR(op, ret, first, second))
+    def insert_label(self, label):
+        """ Apply the label into the next statement
+        """
+        pass 
+
+    def write(self, op, ret, first=None, second=None, *args):
+
+        self.curirstack.append(IR(op, ret, first, second, *args))
 
