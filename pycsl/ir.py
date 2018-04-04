@@ -12,35 +12,39 @@ class Code(Enum):
     HLT = 0
     RET = 1
     BR = 2
+    INVOKE = 3
 
     # Arithmetic Operator
-    ADD = 3
-    SUB = 4
-    MUL = 5
-    DIV = 6
-    REM = 7
-    POW = 8
-    AND = 9
-    OR = 10
-    XOR = 11
-    NOT = 12
+    ADD = 10
+    SUB = 11
+    MUL = 12
+    DIV = 13
+    REM = 14
+    POW = 15
+    AND = 16
+    OR = 17
+    XOR = 18
+    NOT = 19
 
     # Memory
-    ALLOC = 13
-    LOAD = 14
-    STORE = 15
-    GETPTR = 16
+    ALLOC = 30
+    LOAD = 31
+    STORE = 32
+    GETPTR = 33
 
     # Control
-    EQ = 17
-    NE = 18
-    LT = 19
-    LE = 20
-    GT = 21
-    GE = 22
-    PHI = 23
-    CALL = 24
-    DECL = 25
+    EQ = 40
+    NE = 41
+    LT = 42
+    LE = 43
+    GT = 44
+    GE = 45
+    PHI = 46
+    CALL = 47
+    DECL = 48
+
+    def __str__(self):
+        return self.name.lower()
 
 
 def op2code(op:Operator):
@@ -91,13 +95,53 @@ class IR:
         self.second = second 
         self.cond = cond 
 
+    def __str__(self):
+        ret = ''
 
-Label = namedtuple('Label', ['name', 'lineno'])
+        if self.ret is not None:
+            ret += ('%s =' % str(self.ret))
 
-# Stores meta data of a variable
-# type: ValType
-# scope: local == 0 / global == 1
-Variable = namedtuple('Variable', ['name', 'type', 'scope'])
+        if self.code is not None:
+            ret += (' %s' % str(self.code))
+
+        if self.cond is not None:
+            ret += (' %s' % str(self.cond))
+
+        if self.first is not None:
+            ret += (' %s' % str(self.first))
+
+        if isinstance(self.second, tuple) or isinstance(self.second, list):
+            ret += (''.join((' %s' % s for s in self.second)))
+        elif self.second is not None:
+            ret += (' %s' % str(self.second))
+
+        return ret 
+
+
+class Label(namedtuple('Label', ['name'])):
+    """ Label used for code.
+    """
+
+    def __repr__(self):
+        return '<Label %r>' % self.name
+
+    def __str__(self):
+        return str(self.name)
+
+
+class Variable(namedtuple('Variable', ['name', 'type', 'scope'])):
+    """ Stores meta data of a variable
+        type: ValType
+        cope: local == 0 / global == 1
+    """
+    def __repr__(self):
+        return '<Variable %r %r %r>' % (self.scope, self.type, self.name)
+
+    def __str__(self):
+        if self.scope == Scope.GLOBAL:
+            return '[Global %s %s]' % (self.type, self.name)
+        else:
+            return '[%s %s]' % (self.type, self.name)
 
 
 Function = namedtuple('Function', ['name', 'rettype', 'args'])
@@ -108,21 +152,3 @@ class Scope:
     """
     GLOBAL = 0
     LOCAL = 1
-
-
-def printir(ir:IR):
-    
-    if ir.code is None: # direct assignment
-        print('%s = %s' % (ir.ret, ir.first))
-
-    else:
-        if ir.ret is None:
-            if ir.second is None:
-                print('%s %s' % (ir.code, ir.first))
-            else:
-                print('%s %s %s' % (ir.code, ir.first, ir.second))
-        else:
-            if ir.second is not None:
-                print('%s = %s %s %s' % (ir.ret, ir.code, ir.first, ir.second))
-            else:
-                print('%s = %s %s' % (ir.ret, ir.code, ir.first))

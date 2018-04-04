@@ -13,18 +13,53 @@ from .ir import IR, Code, Label, Variable, Function, Scope, op2code
 from .errors import CompileError
 
 
+class SearchableList:
+    """ Either accessed by dict / list
+    """
+    def __init__(self):
+        self.data = list()
+        self.vdata = list()
+        self.labels = dict()
+
+    def __index__(self, i):
+        return self.data[i]
+
+    def append(self, d):
+        self.data.append(d)
+        self.vdata.append(d)
+
+    def clear(self):
+        self.data.clear()
+        self.vdata.clear()
+        self.labels.clear()
+
+    def pop(self):
+        top = self.data.pop()
+        while self.vdata.pop() != top:
+            pass 
+        return top 
+
+    def loc(self, label):
+        return self.labels[label]
+
+    def add_label(self, label, index=-1):
+        self.labels[label] = self.data[index]
+        self.vdata.insert(index, label)
+
+
 class IRBuilder:
 
     def __init__(self):
         self.global_sym_table = dict()
         self.sym_table_stack = [dict()]    # global symbol table
         self.functions = OrderedDict()
-        self.functions['@global'] = []
+        self.functions['@global'] = SearchableList()
         self.curirstack = self.functions['@global']
-        self.functions[self.curfunc] = []
+
         self.reg_count = 0      # index of unnamed variable
         self.label_count = 0
         self.looplabelstack = []
+        self.labelqueue = []
 
     def clear(self):
         self.curirstack.clear()
@@ -58,7 +93,8 @@ class IRBuilder:
         if ast.type == ASTType.DECL:
             self._translate_decl(ast)
         else:
-            self._translate_expr(ast)
+            r = self._translate_expr(ast)
+            self.write(Code.RET, r) # Controversal: Need to use something to disable it in interperator.
 
 
     def _translate_stmt(self, ast:AST):
@@ -68,7 +104,10 @@ class IRBuilder:
         if ast.type == ASTType.BLOCK:
             self.sym_table_stack.append(dict())
             for node in ast.nodes:
-                self._translate_stmt(node)
+                if node.type == ASTType.DECL:
+                    self._translate_decl(node)
+                else:
+                    self._translate_stmt(node)
             self.sym_table_stack.pop()
 
         elif ast.type == ASTType.DECL:
@@ -199,7 +238,7 @@ class IRBuilder:
             self.write(Code.GETPTR, valptr, valarr, subarray)  # %valptr = getptr %valarr %subarray
             return valptr
 
-        asn, lazyeval, isconst = *args 
+        asn, lazyeval, isconst = args 
 
         operator = ast.value
         if OpAryLoc[operator] != len(ast.nodes):
@@ -293,7 +332,7 @@ class IRBuilder:
                         return val0 
 
                     elif operator in (Operator.POSTINC, Operator.POSTDEC):
-                        ret = self.create_reg()
+                        ret = self.create_reg(val0.type)
                         self.write(None, ret, val0)
                         self.write(code, val0, val0, Value(val0.type, 1))
                         return ret 
@@ -311,7 +350,7 @@ class IRBuilder:
                 ret = self.create_reg()
                 self.write(code, ret, val0, val1)
             else:   # -, not
-                ret = self.create_reg()
+                ret = self.create_reg(val0.type)
                 self.write(code, ret, val0)
             return ret 
         
@@ -430,7 +469,7 @@ class IRBuilder:
         ## array shape
         if len(ast.nodes[0].nodes) > 0:
             for node in ast.nodes[0].nodes:
-                newdimlen = self._translate_expr(node, asn=False) # must be const node?
+                newdimlen = self._translate_expr(node, asn=False, isconst=True) # must be const node?
                 if newdimlen.type != ValType.INT:
                     # type cast / raise error
                     pass 
@@ -506,17 +545,20 @@ class IRBuilder:
         return var           
 
 
-    def create_label(self):
-        label = Label('%d' % self.label_count, None)
+    def create_label(self, label_name=None):
+        label = Label(('label_%d' % self.label_count) if not label_name else label_name)
         self.label_count += 1
         return label
 
     def insert_label(self, label):
-        """ Apply the label into the next statement
+        """ Apply the label into the next ir.
         """
-        pass 
+        self.labelqueue.append(label) 
 
-    def write(self, op, ret, first=None, second=None, *args):
+    def write(self, op, ret, first=None, second=None, *args, **kwargs):
 
-        self.curirstack.append(IR(op, ret, first, second, *args))
+        self.curirstack.append(IR(op, ret, first, second, *args, **kwargs))
+        for label in self.labelqueue:
+            self.curirstack.add_label(label)
+        self.labelqueue.clear()
 

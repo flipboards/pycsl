@@ -1,7 +1,7 @@
 
 from enum import Enum
 
-typenames = ['int', 'float', 'str']
+typenames = ['void', 'bool', 'char', 'int', 'float', 'str']
 
 class ValType(Enum):
         
@@ -11,6 +11,13 @@ class ValType(Enum):
     INT = 3
     FLOAT = 4
     STR = 5
+
+    def __repr__(self):
+        return self.name
+
+    def __str__(self):
+        return self.name.lower()
+
 
 TypenameLoc = dict(zip(typenames, ValType))
 
@@ -42,3 +49,6 @@ class Value:
 
     def __repr__(self):
         return '[%s: %r]' % (self.type, self.val)
+
+    def __str__(self):
+        return '[const %s %r]' % (self.type, self.val)
