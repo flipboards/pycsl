@@ -88,8 +88,7 @@ class Parser:
         Syntax:
             func_def_or_decl = func_declarator ';'
                 | func_declarator compound_stmt;
-            func_declarator = 'def' id '(' id_list? ')'
-            
+            func_declarator = 'def' id '(' func_decl_list? ')'   
         """
         
         # func head
@@ -98,17 +97,29 @@ class Parser:
 
         ast_head = AST(ASTType.DECL, DeclNode.FUNCDECL)
         ast_head.append(AST(ASTType.NAME, self.cur_token.val))
+        ast_vars = AST(ASTType.DECL, DeclNode.VARDECL)
 
         self.force_match_op(Operator.LBRA)
         while True:
             if self.match(TokenType.NAME):
-                ast_head.append(token2ast(self.cur_token))
+                varnode = AST(ASTType.DECL, DeclNode.DECLELEM)
+                varnode.append(token2ast(self.cur_token))
+                if self.match_sep(Separator.COLON):
+                    self.force_match(TokenType.TYPE)
+                    varnode.append(token2ast(self.cur_token))
+                ast_vars.append(varnode)
+
                 if self.match_sep(Separator.COMMA):
                     continue 
             elif self.match_op(Operator.RBRA):
                 break 
             else:
                 raise SynError('Unrecognized symbol %s' % self.next_token, self.lexer.cur_pos())
+
+        ast_head.append(ast_vars)
+        if self.match_sep(Separator.COLON):
+            self.force_match(TokenType.TYPE)
+            ast_head.append(token2ast(self.cur_token))
 
         mast = AST(ASTType.FUNC)
         mast.append(ast_head)

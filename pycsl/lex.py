@@ -38,7 +38,7 @@ class Lexer:
     re_kwd_type = re.compile('|'.join(typenames))
     re_kwd_def = re.compile('|'.join(keywords.def_kwds))
     re_kwd_logic = re.compile('|'.join(keywords.logic_kwds))
-    re_kwd_sep = re.compile(r'[\{\}\,]')
+    re_kwd_sep = re.compile(r'[\{\}\,\:]')
 
 
     def __init__(self):
