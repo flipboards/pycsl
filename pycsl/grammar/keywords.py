@@ -6,7 +6,7 @@ from enum import Enum
 ctrl_kwds = ['if', 'else', 'for', 'while', 'return', 'break', 'continue']
 def_kwds = ['def', 'class']
 logic_kwds = ['and', 'or', 'xor', 'not']    # they are operators
-sep_kwds = ['{', '}', ',']                  # they are separators
+sep_kwds = ['{', '}', ',', ':']                  # they are separators
 
 class Keyword(Enum):
 
@@ -25,6 +25,7 @@ class Separator(Enum):
     LCPD = 0
     RCPD = 1
     COMMA = 2
+    COLON = 3
 
 
 KeywordLoc = dict(zip(ctrl_kwds + def_kwds, Keyword))

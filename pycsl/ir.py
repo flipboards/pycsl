@@ -144,7 +144,17 @@ class Variable(namedtuple('Variable', ['name', 'type', 'scope'])):
             return '[%s %s]' % (self.type, self.name)
 
 
-Function = namedtuple('Function', ['name', 'rettype', 'args'])
+class Function(namedtuple('Function', ['name', 'type', 'args'])):
+    """ Stores meta data of function.
+        type: ValType (type of returned variable)
+        args: list of Variables that are present in this function.
+        (Arguments are registered in local variables before)
+    """
+    def __repr__(self):
+        return '<Function %r %r(%r)>' (self.type, self.name, ''.join((str(a) for a in self.args)))
+
+    def __str__(self):
+        return '[%s %s(%s)]' % (self.type, self.name, ''.join((str(a) for a in self.args))
 
 
 class Scope:

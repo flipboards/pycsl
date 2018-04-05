@@ -76,8 +76,7 @@ class IRBuilder:
             if node.type == ASTType.DECL:
                 self._translate_decl(node)
             elif node.type == ASTType.FUNC:
-                # translate function definition
-                pass 
+                self._translate_function(node)
             else:
                 raise CompileError("Invalid code")
 
@@ -96,6 +95,50 @@ class IRBuilder:
             r = self._translate_expr(ast)
             self.write(Code.RET, r) # Controversal: Need to use something to disable it in interperator.
 
+    def _translate_function(self, ast:AST):
+        
+        function = self._translate_funchead(ast.nodes[0])
+
+        if len(ast.nodes) == 1: # decalration only
+            self.write(Code.DECL, function)
+
+        else:
+
+            self.functions[function.name] = SearchableList()
+            self.curirstack = self.functions[function.name]
+
+            # prepare local arguments
+            self.sym_table_stack.append(dict())
+            for arg in arguments:
+                self.sym_table_stack[-1][arg.name] = arg 
+
+            self._translate_stmt(ast.nodes[1])
+            self.curirstack = self.functions['@global']
+
+    def _translate_funchead(self, ast:AST):
+        """ Translate function declaration (Correponding to FUNCDECL node)
+        """
+
+        assert ast.type == ASTType.DECL and ast.value == DeclNode.FUNCDECL
+
+        funcname = ast.nodes[0].value.name 
+        funcvars = []
+        for denode in ast.nodes[1].nodes:
+            argname = denode.nodes[0].value.name 
+
+            if len(denode.nodes) == 2: # notype
+                argtype = denode.nodes[1].value
+            else:
+                argtype = ValType.VOID
+
+            funcvars.append(Variable(argname, argtype, Scope.LOCAL))
+        
+        if len(ast.nodes) == 3:
+            rettype = ast.nodes[2].value 
+        else:
+            rettype = ValType.VOID
+
+        return self.create_func(funcname, funcargs, rettype)
 
     def _translate_stmt(self, ast:AST):
         """ Translate statement (including compound statement)
@@ -192,6 +235,9 @@ class IRBuilder:
             else:
                 varret = self._translate_expr(ast.nodes[0])
                 self.write(Code.RET, None, varret)
+
+        else:
+            raise RuntimeError()
 
     def _translate_expr(self, ast:AST, asn=True, lazyeval=False, isconst=False):
         """ Translate basic expression.
@@ -526,7 +572,7 @@ class IRBuilder:
         self.sym_table_stack[-1][var.name] = var 
         return var 
 
-    def create_var(self, varname, vartype):
+    def create_var(self, varname=None, vartype=ValType.VOID):
         """ Register a new variable in the corresponding symbol table.
         """
         
@@ -544,6 +590,15 @@ class IRBuilder:
 
         return var           
 
+
+    def create_func(self, funcname, funcargs, rettype):
+        
+        func = Function(funcname, funcargs, rettype)
+
+        if func in self.global_sym_table:
+            raise CompileError('Function %s is already defined' % funcname)
+        self.global_sym_table[funcname] = func 
+        return func
 
     def create_label(self, label_name=None):
         label = Label(('label_%d' % self.label_count) if not label_name else label_name)
