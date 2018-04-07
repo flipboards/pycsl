@@ -1,6 +1,14 @@
 """ Errors raised in pyscl
 """
 
+class ReadError(RuntimeError):
+    """ Errors in preprocessing
+    """
+
+    def __init__(self, err):
+        super().__init__('Reading error: %s' % err)
+
+
 class SynError(RuntimeError):
     """ General syntax error
     """

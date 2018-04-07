@@ -1,5 +1,6 @@
 
 from . import lex
+from . import preprocess
 
 from .util import ioutil
 from .errors import SynError
@@ -17,13 +18,15 @@ class Parser:
     The main parser for CSL.
     Using recursive descent here (except for operators, where LR(1) is applied).
     """
+    ast_cache = dict()
 
     def __init__(self):
         self.cur_token = None
         self.next_token = None 
         self.next_look_token = None 
         self.lexer = lex.Lexer()
-        self.aststack = []
+        self.preprocessor = preprocess.Preprocessor()
+
 
     def clear(self):
         """ Clear token, tokenbuffer, aststack, lex.
@@ -32,15 +35,20 @@ class Parser:
         self.next_token = None    
         self.next_look_token = None   
         self.lexer.clear()
-        self.aststack.clear() 
+        self.preprocessor.clear() # TODO: Conflicts of re-imports
 
-    def parse(self, ifile):
+    def parse_file(self, filename):
         """ Parse a file containing functions.
             Returns an AST with node as ROOT.
         """
         self.clear()
-        self.lexer.load(ifile)
+        fullname = self.preprocessor.get_fullname(filename)
+        self.preprocessor.process_file(filename)
+        self.lexer.load(self.preprocessor.result())
+        self.preprocessor.strstack.clear()
         self.next_token = self.lexer.get_token()
+
+        self.ast_cache[fullname] = AST(ASTType.NONE)
 
         blocks = []
 
@@ -50,8 +58,15 @@ class Parser:
                 blocks.append(self._parse_func_or_def())
             elif self.match_noget(TokenType.TYPE):
                 blocks.append(self._parse_decl())
-                if not self.match(TokenType.EOF):
-                    self.force_match(TokenType.EOL)
+                self.force_match(TokenType.EOL)
+            elif self.match(TokenType.DEF, lambda x:x == Keyword.IMPORT):
+                self.force_match(TokenType.NAME)
+                filename_import = self.preprocessor.get_fullname(self.cur_token.val.name + self.preprocessor.suffix)
+                self.force_match(TokenType.EOL)
+                if filename_import not in self.ast_cache:
+                    parser = Parser()
+                    parser.parse_file(filename_import)
+                blocks += self.ast_cache[filename_import].nodes ## TODO: do something deal with over import 
             elif self.match(TokenType.EOL):
                 continue 
             elif self.match(TokenType.EOF):
@@ -59,24 +74,27 @@ class Parser:
             else:
                 raise SynError('Unrecognized head: %s' % self.next_token, self.lexer.cur_pos())
 
-        return AST(ASTType.ROOT, nodes=blocks)
+        self.preprocessor.include_paths.pop()
+        Parser.ast_cache[fullname] = AST(ASTType.ROOT, nodes=blocks)
+        return Parser.ast_cache[fullname]
 
-    def parse_line(self, ifile):
+    def parse_line(self, line):
         """ Parse simple expression & statement.
             Returns the AST.
 
             Notice: Only part before semicolon ';' is parsed.
         """
         self.clear()
-        self.lexer.load(ifile)
+        self.preprocessor.process_line(line)
+        self.lexer.load(self.preprocessor.result())
         self.next_token = self.lexer.get_token()
 
         if self.match_noget(TokenType.TYPE):
             mast = self._parse_decl()
         elif self.match_noget(TokenType.EOL):
-            return None 
+            return AST(ASTType.ROOT) 
         elif self.match_noget(TokenType.EOF):
-            return None 
+            return AST(ASTType.ROOT)
         else:
             mast = self._parse_expr()
 

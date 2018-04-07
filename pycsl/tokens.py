@@ -4,8 +4,13 @@
 from enum import Enum
 from collections import namedtuple
 
-# A simple wrapper for string
-Symbol = namedtuple('Symbol', ['name'])
+
+class Symbol(namedtuple('Symbol', ['name'])):
+    """ A simple wrapper for string
+    """
+
+    def __repr__(self):
+        return self.name
 
 
 class TokenType(Enum):

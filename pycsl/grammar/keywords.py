@@ -4,7 +4,7 @@
 from enum import Enum
 
 ctrl_kwds = ['if', 'else', 'for', 'while', 'return', 'break', 'continue']
-def_kwds = ['def', 'class']
+def_kwds = ['def', 'class', 'import']
 logic_kwds = ['and', 'or', 'xor', 'not']    # they are operators
 sep_kwds = ['{', '}', ',', ':']                  # they are separators
 
@@ -19,6 +19,10 @@ class Keyword(Enum):
     CONTINUE = 6
     DEF = 7
     CLASS = 8
+    IMPORT = 9
+
+    def __repr__(self):
+        return self.name.lower()
 
 
 class Separator(Enum):
