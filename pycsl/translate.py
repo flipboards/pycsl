@@ -11,6 +11,7 @@ from .tokens import Symbol
 from .ast import AST, ASTType, DeclNode
 from .ir import IR, Code, Label, Variable, Function, Scope, op2code
 from .errors import CompileError
+from .evalute import eval_op
 
 
 class SearchableList:
@@ -47,7 +48,7 @@ class SearchableList:
         self.vdata.insert(index, label)
 
 
-class IRBuilder:
+class Translater:
 
     def __init__(self):
         self.global_sym_table = dict()
@@ -239,28 +240,44 @@ class IRBuilder:
         else:
             raise RuntimeError()
 
-    def _translate_expr(self, ast:AST, asn=True, lazyeval=False, isconst=False):
+    def _translate_expr(self, ast:AST, asn=True, lazyeval=False):
         """ Translate basic expression.
             asn: Allow assignment;
             lazyeval: Generate short-circuit code for and/or. But is recommended to 
                 turn off this option here and let optimizer do this task.
-            isconst: Requires Values / non-assignment operators only;
         """
         
         if ast.type == ASTType.OP:
-            return self._translate_op(ast, asn, lazyeval, isconst)
+            return self._translate_op(ast, asn, lazyeval)
         elif ast.type == ASTType.VAL:
             return ast.value
         elif ast.type == ASTType.NAME:
-            if isconst:
-                raise CompileError("Constant expression required") ## TODO: 'const' keyword required
             return self._translate_var(ast)
         elif ast.type == ASTType.CALL:
-            if isconst:
-                raise CompileError("Constant expression required")
             return self._translate_funcall(ast)
         else:
             raise RuntimeError()         
+
+    def _eval_expr(self, ast:AST):
+        """ Evaluate constant expression (values, operations)
+            const variables are not supported yet
+        """
+        if ast.type == ASTType.OP:
+            operator = ast.value
+            if OpAsnLoc[operator]:
+                raise CompileError("Cannot evaluate assignment")
+
+            else:
+                lhs = self._eval_expr(ast.nodes[0])
+                rhs = self._eval_expr(ast.nodes[1]) if len(ast.nodes) > 1 else None
+
+                return eval_op(operator, lhs, rhs)
+
+        elif ast.type == ASTType.VAL:
+            return ast.value
+
+        else:
+            raise CompileError('Cannot evaluate %s' % ast.type)
 
     def _translate_op(self, ast:AST, *args):
 
@@ -284,7 +301,7 @@ class IRBuilder:
             self.write(Code.GETPTR, valptr, valarr, subarray)  # %valptr = getptr %valarr %subarray
             return valptr
 
-        asn, lazyeval, isconst = args 
+        asn, lazyeval = args 
 
         operator = ast.value
         if OpAryLoc[operator] != len(ast.nodes):
@@ -308,7 +325,7 @@ class IRBuilder:
         # ASSIGNMENT
         if OpAsnLoc[operator]:
             
-            if not asn or isconst:
+            if not asn:
                 raise CompileError("Assignment is not allowed")
 
             islvalarray = (ast.nodes[0].value == Operator.LSUB)
@@ -515,7 +532,7 @@ class IRBuilder:
         ## array shape
         if len(ast.nodes[0].nodes) > 0:
             for node in ast.nodes[0].nodes:
-                newdimlen = self._translate_expr(node, asn=False, isconst=True) # must be const node?
+                newdimlen = self._eval_expr(node)
                 if newdimlen.type != ValType.INT:
                     # type cast / raise error
                     pass 
