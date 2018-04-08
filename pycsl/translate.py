@@ -110,7 +110,7 @@ class Translater:
 
             # prepare local arguments
             self.sym_table_stack.append(dict())
-            for arg in arguments:
+            for arg in function.args:
                 self.sym_table_stack[-1][arg.name] = arg 
 
             self._translate_stmt(ast.nodes[1])
@@ -123,7 +123,7 @@ class Translater:
         assert ast.type == ASTType.DECL and ast.value == DeclNode.FUNCDECL
 
         funcname = ast.nodes[0].value.name 
-        funcvars = []
+        funcargs = []
         for denode in ast.nodes[1].nodes:
             argname = denode.nodes[0].value.name 
 
@@ -132,7 +132,7 @@ class Translater:
             else:
                 argtype = ValType.VOID
 
-            funcvars.append(Variable(argname, argtype, Scope.LOCAL))
+            funcargs.append(Variable(argname, argtype, Scope.LOCAL))
         
         if len(ast.nodes) == 3:
             rettype = ast.nodes[2].value 
@@ -612,7 +612,7 @@ class Translater:
         
         func = Function(funcname, funcargs, rettype)
 
-        if func in self.global_sym_table:
+        if funcname in self.global_sym_table:
             raise CompileError('Function %s is already defined' % funcname)
         self.global_sym_table[funcname] = func 
         return func

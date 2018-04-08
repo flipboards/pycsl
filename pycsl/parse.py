@@ -35,7 +35,7 @@ class Parser:
         self.next_token = None    
         self.next_look_token = None   
         self.lexer.clear()
-        self.preprocessor.clear() # TODO: Conflicts of re-imports
+        self.preprocessor.clear()
 
     def parse_file(self, filename):
         """ Parse a file containing functions.
@@ -66,7 +66,7 @@ class Parser:
                 if filename_import not in self.ast_cache:
                     parser = Parser()
                     parser.parse_file(filename_import)
-                blocks += self.ast_cache[filename_import].nodes ## TODO: do something deal with over import 
+                blocks += self.ast_cache[filename_import].nodes ## TODO: check circular import
             elif self.match(TokenType.EOL):
                 continue 
             elif self.match(TokenType.EOF):
@@ -229,6 +229,9 @@ class Parser:
 
         elif self.match_noget(TokenType.SEP, lambda x:x == Separator.LCPD):
             return self._parse_compound_stmt()
+
+        elif self.match(TokenType.EOL):
+            return AST(ASTType.BLOCK)
 
         else:
             mast = self._parse_expr()

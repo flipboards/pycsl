@@ -110,8 +110,8 @@ class IR:
         if self.first is not None:
             ret += (' %s' % str(self.first))
 
-        if isinstance(self.second, tuple) or isinstance(self.second, list):
-            ret += (''.join((' %s' % s for s in self.second)))
+        if isinstance(self.second, list):
+            ret += (''.join((' %s' % str(s) for s in self.second)))
         elif self.second is not None:
             ret += (' %s' % str(self.second))
 
@@ -144,7 +144,7 @@ class Variable(namedtuple('Variable', ['name', 'type', 'scope'])):
             return '[%s %s]' % (self.type, self.name)
 
 
-class Function(namedtuple('Function', ['name', 'type', 'args'])):
+class Function(namedtuple('Function', ['name', 'args', 'type'])):
     """ Stores meta data of function.
         type: ValType (type of returned variable)
         args: list of Variables that are present in this function.
