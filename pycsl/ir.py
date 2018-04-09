@@ -129,11 +129,18 @@ class Label(namedtuple('Label', ['name'])):
         return str(self.name)
 
 
-class Variable(namedtuple('Variable', ['name', 'type', 'scope'])):
+class Variable:
     """ Stores meta data of a variable
         type: ValType
         cope: local == 0 / global == 1
     """
+
+    def __init__(self, name, type_, scope, ref=None):
+        self.name = name
+        self.type = type_
+        self.scope = scope
+        self.ref = ref 
+
     def __repr__(self):
         return '<Variable %r %r %r>' % (self.scope, self.type, self.name)
 
@@ -142,6 +149,16 @@ class Variable(namedtuple('Variable', ['name', 'type', 'scope'])):
             return '[Global %s %s]' % (self.type, self.name)
         else:
             return '[%s %s]' % (self.type, self.name)
+
+
+class Pointer(namedtuple('Pointer', ['type'])):
+    """ Wrapper for pointer
+    """
+    def __repr__(self):
+        return '<Pointer %r>' % (self.type)
+
+    def __str__(self):
+        return '%s *' % (self.type)
 
 
 class Function(namedtuple('Function', ['name', 'args', 'type'])):

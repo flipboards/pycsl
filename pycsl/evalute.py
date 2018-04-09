@@ -16,7 +16,7 @@ def _cdiv(a, b):
 OpEvalLoc = {
     Operator.ADD: lambda a, b: a + b,
     Operator.SUB: lambda a, b: a - b,
-    Operator.MUL: lambda a, b: a * b
+    Operator.MUL: lambda a, b: a * b,
     Operator.DIV: _cdiv,
     Operator.REM: lambda a, b: a % b,
     Operator.POW: lambda a, b: a ** b,

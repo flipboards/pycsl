@@ -1,5 +1,5 @@
 
-from numpy import product
+from numpy import product, zeros
 from enum import Enum
 from collections import namedtuple, OrderedDict
 
@@ -9,9 +9,14 @@ from .grammar.keywords import Keyword
 
 from .tokens import Symbol
 from .ast import AST, ASTType, DeclNode
-from .ir import IR, Code, Label, Variable, Function, Scope, op2code
+from .ir import IR, Code, Label, Variable, Pointer, Function, Scope, op2code
 from .errors import CompileError
 from .evalute import eval_op
+
+
+class Side:
+    LHS = 0
+    RHS = 1
 
 
 class SearchableList:
@@ -50,9 +55,11 @@ class SearchableList:
 
 class Translater:
 
+    ARRAY_SIZE_LIMIT = 16384
+
     def __init__(self):
         self.global_sym_table = dict()
-        self.sym_table_stack = [dict()]    # global symbol table
+        self.sym_table_stack = [dict()]
         self.functions = OrderedDict()
         self.functions['@global'] = SearchableList()
         self.curirstack = self.functions['@global']
@@ -108,10 +115,21 @@ class Translater:
             self.functions[function.name] = SearchableList()
             self.curirstack = self.functions[function.name]
 
-            # prepare local arguments
+            # prepare argument stack
+            self.reg_count = 0
             self.sym_table_stack.append(dict())
+
+            # allocate local copy of arguments. This need to be changed when allowing reference
             for arg in function.args:
-                self.sym_table_stack[-1][arg.name] = arg 
+                localarg = self.create_reg(Pointer(arg.type)) # local copy
+                arg.ref = localarg.name
+                self.write(Code.ALLOC, localarg, arg.type)
+                self.write(Code.STORE, None, arg, localarg)
+                self.sym_table_stack[-1][arg.name] = arg
+
+            # assign a local argument into current code segment
+            code_addr = self.create_reg()
+            self.create_var()
 
             self._translate_stmt(ast.nodes[1])
             self.curirstack = self.functions['@global']
@@ -240,23 +258,24 @@ class Translater:
         else:
             raise RuntimeError()
 
-    def _translate_expr(self, ast:AST, asn=True, lazyeval=False):
+    def _translate_expr(self, ast:AST, side=Side.RHS, lazyeval=False):
         """ Translate basic expression.
-            asn: Allow assignment;
             lazyeval: Generate short-circuit code for and/or. But is recommended to 
                 turn off this option here and let optimizer do this task.
         """
         
         if ast.type == ASTType.OP:
-            return self._translate_op(ast, asn, lazyeval)
+            return self._translate_op(ast, side, lazyeval)
         elif ast.type == ASTType.VAL:
+            if side == Side.LHS:
+                raise CompileError("Cannot assign to constant")
             return ast.value
         elif ast.type == ASTType.NAME:
-            return self._translate_var(ast)
+            return self._translate_var(ast, side)
         elif ast.type == ASTType.CALL:
             return self._translate_funcall(ast)
         else:
-            raise RuntimeError()         
+            raise RuntimeError()
 
     def _eval_expr(self, ast:AST):
         """ Evaluate constant expression (values, operations)
@@ -279,16 +298,16 @@ class Translater:
         else:
             raise CompileError('Cannot evaluate %s' % ast.type)
 
-    def _translate_op(self, ast:AST, *args):
+    def _translate_op(self, ast:AST, side, *args):
 
         def translate_subscript(mast, subarray):
             """ Translate continues subscripts. Notice: assignment is not allowed in indexing.
             """
             if mast.value != Operator.LSUB:
-                return self._translate_expr(mast, False, *args[1:])
+                return self._translate_expr(mast, Side.LHS, False, *args[1:])
             else:
                 lhs = translate_subscript(mast.nodes[0], subarray)
-                subarray.append(self._translate_expr(mast.nodes[1], False, *args[1:]))
+                subarray.append(self._translate_expr(mast.nodes[1], Side.RHS, False, *args[1:]))
                 return lhs 
 
         def translate_array_index(mast):
@@ -301,7 +320,7 @@ class Translater:
             self.write(Code.GETPTR, valptr, valarr, subarray)  # %valptr = getptr %valarr %subarray
             return valptr
 
-        asn, lazyeval = args 
+        lazyeval = args[0]
 
         operator = ast.value
         if OpAryLoc[operator] != len(ast.nodes):
@@ -312,110 +331,81 @@ class Translater:
         ## ret = LOAD ptr
         if operator == Operator.LSUB:
             valptr = translate_array_index(ast)
-            valret = self.create_reg()
-            self.write(Code.LOAD, valret, valptr)  # %valret = load %valptr
-            return valret 
+
+            if side == Side.LHS:
+                return valptr
+
+            else:
+                valret = self.create_reg()
+                self.write(Code.LOAD, valret, valptr)  # %valret = load %valptr
+                return valret 
+        
         ## TODO: ADD MEMBER OPERATOR (.)
 
         try:
             code = op2code(operator)
         except KeyError:
-            raise CompileError("Operator %s not valid" % operator)
+            raise CompileError("Operator %s is not valid" % operator)
 
         # ASSIGNMENT
         if OpAsnLoc[operator]:
             
-            if not asn:
-                raise CompileError("Assignment is not allowed")
-
-            islvalarray = (ast.nodes[0].value == Operator.LSUB)
+            if side == Side.LHS:
+                raise CompileError("Expression is not assignable")
 
             ## =, +=, -=
             if OpAryLoc[operator] == 2:
-                val1 = self._translate_expr(ast.nodes[1], *args)
+                valrhs = self._translate_expr(ast.nodes[1], Side.RHS, *args)
+                vallhs = self._translate_expr(ast.nodes[0], Side.LHS, *args)
 
-                ## Special Case: a[b] = c
-                ## ptr = GETPTR(a, b)
-                ## STORE val, ptr
-                if islvalarray:
-                    valptr = translate_array_index(ast.nodes[0])
-
-                    if code is not None:
-                        
-                        # val0 = LOAD valptr
-                        val0 = self.create_reg()
-                        self.write(Code.LOAD, val0, valptr)
-
-                        valret = self.create_reg() # stores the calculation result
-                        self.write(code, valret, val0, val1)
-                        self.write(Code.STORE, None, valret, valptr)
-                        return valret
-                    else:
-                        self.write(Code.STORE, None, val1, valptr)    # store retaddr val1
-                        return val1
-                
-                ## Trivial case
+                if code is not None:
+                    rvallhs = self.create_reg(vallhs.type)
+                    self.write(Code.LOAD, rvallhs, vallhs)
+                    valret = self.create_reg() # type cast here
+                    self.write(code, valret, rvallhs, valrhs)
+                    self.write(Code.STORE, None, valret, vallhs)
+                    
+                    return valret
                 else:
-                    val0 = self._translate_expr(ast.nodes[0], *args)
-
-                    #if not isinstance(val0, Symbol):
-                    #    raise CompileError('%r cannot be lvalue' % val0)
-
-                    if code is not None:
-                        self.write(code, val0, val0, val1) # val0 = val0 + val1
-                    else:
-                        self.write(None, val0, val1)  # val0 = val1
-                    return val0
+                    self.write(Code.STORE, None, valrhs, vallhs)  # val0 = val1
+                    
+                    return valrhs
 
             ## ++, --
             else:
                 
-                if islvalarray:
-                    valptr = translate_array_index(ast.nodes[0])
+                vallhs = self._translate_expr(ast.nodes[0], Side.LHS)
+                rvallhs = self.create_reg(vallhs.type)
+                self.write(Code.LOAD, rvallhs, vallhs)
+                valret = self.create_reg(vallhs.type)
+                self.write(code, valret, rvallhs, Value(vallhs.type, 1))
+                self.write(Code.STORE, None, valret, vallhs)
 
-                    val0 = self.create_reg()
-                    self.write(Code.LOAD, val0, valptr)
+                if operator in (Operator.INC, Operator.DEC):
+                    return valret
 
-                    valret = self.create_reg()
-                    self.write(realop, valret, val0, Value(val0.type, 1))
-
-                    self.write(Code.STORE, None, valret, valptr)
-
-                    if operator in (Operator.INC, Operator.DEC):
-                        return valret 
-                    elif operator in (Operator.POSTINC, Operator.POSTDEC):
-                        return val0 
-
+                elif operator in (Operator.POSTINC, Operator.POSTDEC):
+                    return rvallhs
 
                 else:
-                    val0 = self._translate_expr(ast.nodes[0])
+                    raise RuntimeError()
 
-                    if operator in (Operator.INC, Operator.DEC):
-                        self.write(code, val0, val0, Value(val0.type, 1))
-                        return val0 
-
-                    elif operator in (Operator.POSTINC, Operator.POSTDEC):
-                        ret = self.create_reg(val0.type)
-                        self.write(None, ret, val0)
-                        self.write(code, val0, val0, Value(val0.type, 1))
-                        return ret 
-
-                    else:
-                        raise RuntimeError()
         else:
-            val0 = self._translate_expr(ast.nodes[0], *args)
+            vallhs = self._translate_expr(ast.nodes[0], Side.RHS, *args)
             if OpAryLoc[operator] == 2:
 
                 if lazyeval and operator in (Operator.AND, Operator.OR):
-                    return self._translate_lazyevalbool(code, val0, ast.nodes[1], *args)
+                    return self._translate_lazyevalbool(code, vallhs, ast.nodes[1], *args)
 
-                val1 = self._translate_expr(ast.nodes[1], *args)
-                ret = self.create_reg()
-                self.write(code, ret, val0, val1)
-            else:   # -, not
-                ret = self.create_reg(val0.type)
-                self.write(code, ret, val0)
-            return ret 
+                valrhs = self._translate_expr(ast.nodes[1], Side.RHS, *args)
+                valret = self.create_reg() # type cast here
+                self.write(code, valret, vallhs, valrhs)
+
+            # -, not    
+            else:   
+                valret = self.create_reg(vallhs.type)
+                self.write(code, valret, vallhs)
+            return valret 
         
     def _translate_lazyevalbool(self, code, vallhs, astrhs, *args):
 
@@ -446,21 +436,34 @@ class Translater:
         else:
             raise RuntimeError()
 
-    def _translate_var(self, ast:AST):
+    def _translate_var(self, ast:AST, side):
         """ Translate a name
         """
         assert ast.type == ASTType.NAME
 
         varname = ast.value.name 
+        var = None
 
         for local_sym_table in self.sym_table_stack:
             if varname in local_sym_table:
-                return local_sym_table[varname]
-        
-        if varname in self.global_sym_table:
-            return self.global_sym_table[varname]
+                var = local_sym_table[varname]
+                break
+
+        if not var:
+
+            if varname in self.global_sym_table:
+                var = self.global_sym_table[varname]
+            else:
+                raise CompileError('Variable %s not defined' % varname)
+
+        if side == Side.LHS:
+            if var.ref == None:
+                raise CompileError("Cannot perform assignment into temporary variable")
+            return var
         else:
-            raise CompileError('Variable %s not defined' % varname)
+            rval = self.create_reg(var.type)
+            self.write(Code.LOAD, rval, var)
+            return rval
 
 
     def _translate_funcall(self, ast:AST):
@@ -502,15 +505,17 @@ class Translater:
             typename: ValType instance.
         """
 
-        def translate_init_list(mast, coord, inits):
+        def translate_init_list(mast, coord, inits, requireconst=False):
             """ Translation initialzation list.
                 inits: List of tuple (coord, val) (for return)
             """
+            evalfunc = self._translate_expr if not requireconst else self._eval_expr
+
             for i, node in enumerate(mast.nodes):
                 if node.type == ASTType.LIST:
                     translate_init_list(node, coord + [i], inits)
                 else:
-                    inits.append((coord + [i], self._translate_expr(node)))
+                    inits.append((coord + [i], evalfunc(node)))
 
         def unflat(val:int, dim, coord):
             """ coord: list for return
@@ -542,29 +547,21 @@ class Translater:
                 arrshape.append(newlen)
 
         # type = (typename, shape)
-        var = self.create_var(varname, typename if not arrshape else (typename, len(arrshape)))
+        vartype = typename if not arrshape else [typename] + arrshape
+        var = self.create_var(varname, vartype)
 
-        # declaration only
-        if len(ast.nodes) == 1:
-            self.write(Code.DECL, var, (typename, arrshape), None) # this is actually unnecessary for local variables
+        if arrshape and product(arrshape) > Translater.ARRAY_SIZE_LIMIT:
+            raise CompileError('Array too large (%d). Try use "new" instead.' % product(arrshape))
 
-        # declaration of single variable
-        elif not arrshape:
-            if ast.nodes[1].type == ASTType.LIST:
-                raise CompileError('Variable %s cannot be initialized by list' % varname)
-            self.write(Code.DECL, var, (typename, arrshape), self._translate_expr(ast.nodes[1]))
-
-        # array initialization
-        else:
+        if len(ast.nodes) > 1 and arrshape:
             if ast.nodes[1].type != ASTType.LIST:
                 raise CompileError('Array must be initialized by list')
-            self.write(Code.DECL, var, (typename, arrshape), None)
-
-            # fill 0 for the whole array here
-
+            inits1 = []
+            translate_init_list(ast.nodes[1], [], inits1, var.scope==Scope.GLOBAL)
             inits = []
-            translate_init_list(ast.nodes[1], [], inits)
-            for coord, val in inits:
+
+            # expand init list into full coordination
+            for coord, val in inits1:
                 # lower dimension
                 if len(coord) < len(arrshape):
                     cvt_coord = coord[:-1]
@@ -576,9 +573,44 @@ class Translater:
                     if c >= s:
                         raise CompileError("Too much value in initialization list")
 
-                ptr = self.create_reg()
-                self.write(Code.GETPTR, ptr, var, cvt_coord)
-                self.write(Code.STORE, None, val, ptr)   # actually translate_const_expr here, where the value will be calculated
+                inits.append((coord, val))
+
+        # only global variables need initializer; Local variable only create pointer
+        if var.scope == Scope.GLOBAL:
+            var.ref = varname
+            if not arrshape:
+                initializer = Value(vartype, self._eval_expr(ast.nodes[1]))
+            else:
+                init_array = zeros(arrshape, dtype=(float if vartype[0] == ValType.FLOAT else int))
+                if len(ast.nodes) == 1:
+                    for c, v in inits:
+                        init_array[tuple(c)] = v.val
+                initializer = Value(vartype, init_array)
+
+            self.write(Code.DECL, var, vartype, initializer)
+
+        elif var.scope == Scope.LOCAL:
+
+            ptr = self.create_reg(Pointer(vartype))
+            var.ref = ptr.name
+            self.write(Code.ALLOC, ptr, vartype)
+
+            # declaration only
+            if len(ast.nodes) == 1:
+                pass
+
+            elif not arrshape:
+                initializer = self._translate_expr(ast.nodes[1])
+                self.write(Code.STORE, None, initializer, ptr)
+
+            else:
+
+                # fill 0 for the whole array here (memcpy)
+
+                for c, v in inits:
+                    elemptr = self.create_reg()
+                    self.write(Code.GETPTR, elemptr, ptr, c)
+                    self.write(Code.STORE, None, v, elemptr)   # actually translate_const_expr here, where the value will be calculated
 
 
     def create_reg(self, mtype=None):
@@ -593,6 +625,7 @@ class Translater:
         """ Register a new variable in the corresponding symbol table.
         """
         
+        # global variable
         if len(self.sym_table_stack) == 0:
             if varname in self.global_sym_table:
                 raise CompileError('Variable %s is already defined' % varname)

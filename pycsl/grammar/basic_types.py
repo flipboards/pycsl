@@ -25,7 +25,7 @@ class Value:
     """ Represent an immediate value (like a number/char/string)
     """
 
-    def __init__(self, vtype:ValType, val):
+    def __init__(self, vtype, val):
         self.type = vtype 
         self.val = val 
 
