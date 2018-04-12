@@ -68,4 +68,4 @@ def eval_op(op:Operator, lhs:Value, rhs=None):
         return Value(rettype, evalfunc(lhs.val))
 
     else:
-        return ValType(rettype, evalfunc(lhs.val, rhs.val))
+        return Value(rettype, evalfunc(lhs.val, rhs.val))

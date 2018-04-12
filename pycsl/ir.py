@@ -41,7 +41,6 @@ class Code(Enum):
     GE = 45
     PHI = 46
     CALL = 47
-    DECL = 48
 
     def __str__(self):
         return self.name.lower()
@@ -118,64 +117,60 @@ class IR:
         return ret 
 
 
-class Label(namedtuple('Label', ['name'])):
-    """ Label used for code.
-    """
-
-    def __repr__(self):
-        return '<Label %r>' % self.name
-
-    def __str__(self):
-        return str(self.name)
-
-
-class Variable:
-    """ Stores meta data of a variable
-        type: ValType
-        cope: local == 0 / global == 1
-    """
-
-    def __init__(self, name, type_, scope, ref=None):
-        self.name = name
-        self.type = type_
-        self.scope = scope
-        self.ref = ref 
-
-    def __repr__(self):
-        return '<Variable %r %r %r>' % (self.scope, self.type, self.name)
-
-    def __str__(self):
-        if self.scope == Scope.GLOBAL:
-            return '[Global %s %s]' % (self.type, self.name)
-        else:
-            return '[%s %s]' % (self.type, self.name)
-
-
 class Pointer(namedtuple('Pointer', ['type'])):
-    """ Wrapper for pointer
+    """ Pointer type;
     """
+
+    def unref_type(self):
+        return self.type
+
     def __repr__(self):
         return '<Pointer %r>' % (self.type)
 
     def __str__(self):
         return '%s *' % (self.type)
 
-
-class Function(namedtuple('Function', ['name', 'args', 'type'])):
-    """ Stores meta data of function.
-        type: ValType (type of returned variable)
-        args: list of Variables that are present in this function.
-        (Arguments are registered in local variables before)
+class Label:
+    """ Label type;
     """
+
+    def __init__(self):
+        self.addr = None
+
+
+class Array(namedtuple('Array', ['type', 'size'])):
+    """ Array type;
+    """
+
     def __repr__(self):
-        return '<Function %r %r(%r)>' (self.type, self.name, ''.join((str(a) for a in self.args)))
+        return '<Array %r x %r>' % (self.type, self.size)
 
     def __str__(self):
-        return '[%s %s(%s)]' % (self.type, self.name, ''.join((str(a) for a in self.args)))
+        return '[%s x %d]' % (self.type, self.size)
 
 
-class Scope:
-    """ Variable scope
+class Register(namedtuple('Register', ['type'])):
+    """ Stores a register (temporary variable in a function)
+        type: can be ValType, Pointer or Label;
     """
-    GLOBAL = 0
-    LOCAL = 1
+    def __repr__(self):
+        return '<Register %r>' % str(self.type)
+
+    def __str__(self):
+        return '[%s]' % str(self.type)
+
+
+class Block:
+
+    def __init__(self):
+        self.registers = [] # list of  Register instances
+        self.codes = []     # list of IR instances
+
+
+class Identifier(namedtuple('Identifier', ['addr'])):
+    
+    def __repr__(self):
+        return '<Identifier %r>' % self.addr
+
+    def __str__(self):
+        return '%%%d' % self.addr if isinstance(self.addr, int) else '@%s' % self.addr
