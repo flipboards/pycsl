@@ -9,7 +9,7 @@ from .grammar.keywords import Keyword
 
 from .tokens import Symbol
 from .ast import AST, ASTType, DeclNode
-from .ir import IR, Code, Array, Label, Pointer, Register, Block, Identifier, op2code
+from .ir import IR, Code, Array, Label, Pointer, Register, Block, MemoryLoc, Identifier, op2code
 from .errors import CompileError
 from .evalute import eval_op
 
@@ -19,52 +19,22 @@ class Side:
     RHS = 1
 
 
-class SearchableList:
-    """ Either accessed by dict / list
-    """
-    def __init__(self):
-        self.data = list()
-        self.vdata = list()
-        self.labels = dict()
-
-    def __index__(self, i):
-        return self.data[i]
-
-    def __len__(self):
-        return len(self.data)
-
-    def append(self, d):
-        self.data.append(d)
-        self.vdata.append(d)
-
-    def clear(self):
-        self.data.clear()
-        self.vdata.clear()
-        self.labels.clear()
-
-    def pop(self):
-        top = self.data.pop()
-        while self.vdata.pop() != top:
-            pass 
-        return top 
-
-    def loc(self, label):
-        return self.labels[label]
-
-    def add_label(self, label, index=-1):
-        self.labels[label] = index if index >= 0 else len(self.data) + index
-        self.vdata.insert(index, label)
-
-
 class Translater:
 
     ARRAY_SIZE_LIMIT = 16384
 
     def __init__(self):
-        self.global_sym_table = dict()  # dict{string: Variable/Function}
-        self.function_table = dict()    # dict{function_signature: function block number}
-        self.sym_table_stack = [dict()] # dict{string <-- var name:int <-- register id}
+
+        # symbol tables
+        self.global_sym_table = dict()  # dict{string: Register}
+        self.function_table = dict()    # dict{function name: function signature}
+        self.sym_table_stack = [dict()] # dict{string <-- var name:Identifier <-- register id}
+        
+        # functions
         self.functions = []             # list [Block]
+        self.global_values = {}         # dict{string: Value}; Value of global vars;
+
+        # temporary variables
         self.curfunction = None
         self.looplabelstack = []
 
@@ -132,11 +102,10 @@ class Translater:
         # allocate local copy of arguments. This need to be changed when allowing reference
         for argname, argtype in zip(argnames, argtypes):
             
-            argptr = self.create_reg(Pointer(argtype))
-            self.write(Code.ALLOC, argptr, argtype)
-            self.write(Code.STORE, None, self.sym_table_stack[-1][argname], argptr)
-
-            self.sym_table_stack[-1][argname] = argptr # now change reference into local copy
+            argid = self.create_reg(Pointer(argtype))
+            self.write(Code.ALLOC, argid, argtype)
+            self.write(Code.STORE, None, self.sym_table_stack[-1][argname], argid)
+            self.sym_table_stack[-1][argname] = argid # now change reference into local copy
 
 
         assert ast.nodes[1].type == ASTType.BLOCK
@@ -642,14 +611,15 @@ class Translater:
                         init_array[tuple(c)] = v.val
                 initializer = Value(vartype, init_array)
 
-            initializer.type = Pointer(initializer.type)
-            self.global_sym_table[varname] = initializer
+            self.global_sym_table[varname] = Register(Pointer(vartype))
+            self.global_values[varname] = initializer
 
         else:
 
             for local_sym_table in self.sym_table_stack:
                 if varname in local_sym_table:
                     raise CompileError('Variable "%s" already defined' % varname)
+
             varid = self.create_reg(Pointer(vartype))
             self.write(Code.ALLOC, varid, vartype)
             self.sym_table_stack[-1][varname] = varid
@@ -676,32 +646,45 @@ class Translater:
         """ Create a temporary variable that can be in stack top/register
         """
         self.curfunction.registers.append(Register(mtype))
-        return Identifier(len(self.curfunction.registers) - 1)   
+        return Identifier(MemoryLoc.LOCAL, len(self.curfunction.registers) - 1)   
 
     def create_label(self):
-        return self.create_reg(Label())
+        self.curfunction.registers.append(Label())
+        return Identifier(MemoryLoc.LOCAL, len(self.curfunction.registers) - 1)
 
     def insert_label(self, label_id):
         """ Pointer label with label_id to next code
         """
-        self.curfunction.registers[label_id.addr].type.addr = len(self.curfunction.codes)
+        self.locate(label_id).addr = len(self.curfunction.codes)
 
-    def get_vartype(self, varid):
+    def locate(self, id_):
+        """ id_: Identifier;
+            Returns: Label / Register / Value
+        """
+        if id_.loc == MemoryLoc.GLOBAL:
+            return self.global_sym_table[id_.addr]
 
-        if isinstance(varid, Value):
-            return varid.type
-
-        elif isinstance(varid, Identifier):
-            if isinstance(varid.addr, int): # local var / arg
-                return self.curfunction.registers[varid.addr].type
-            else:
-                return self.global_sym_table[varid.addr].type
+        elif id_.loc == MemoryLoc.LOCAL:
+            return self.curfunction.registers[id_.addr]
 
         else:
             raise RuntimeError()
 
-    def write(self, op, ret, first=None, second=None, *args, **kwargs):
+    def get_vartype(self, value_or_id):
+        """ Returns the type of variable / value
+        """
 
-        self.curfunction.codes.append(IR(op, ret, first, second, *args, **kwargs))
+        if isinstance(value_or_id, Value):
+            return value_or_id.type
+
+        elif isinstance(value_or_id, Identifier):
+            return self.locate(value_or_id).type
+
+        else:
+            raise RuntimeError()
+
+    def write(self, code, ret, first=None, second=None, *args, **kwargs):
+
+        self.curfunction.codes.append(IR(code, ret, first, second, *args, **kwargs))
 
 
