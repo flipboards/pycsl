@@ -1,4 +1,4 @@
 
-from .code import Code, IR, op2code
-from .types import Pointer, Label, Array, Register
-from .memory import Block, MemoryLoc, Identifier
+from .tac import Code, TAC, op2code
+from .types import Pointer, Array
+from .memory import Block, MemoryLoc, Identifier, Register, Label

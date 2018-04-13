@@ -9,7 +9,11 @@ from .grammar.keywords import Keyword
 
 from .tokens import Symbol
 from .ast import AST, ASTType, DeclNode
-from .ir import IR, Code, Array, Label, Pointer, Register, Block, MemoryLoc, Identifier, op2code
+
+from .ir.tac import Code, TAC, op2code
+from .ir.types import Array, Pointer
+from .ir.memory import Register, Label, Block, MemoryLoc, Identifier
+
 from .errors import CompileError
 from .evalute import eval_op
 
@@ -685,6 +689,6 @@ class Translater:
 
     def write(self, code, ret, first=None, second=None, *args, **kwargs):
 
-        self.curfunction.codes.append(IR(code, ret, first, second, *args, **kwargs))
+        self.curfunction.codes.append(TAC(code, ret, first, second, *args, **kwargs))
 
 

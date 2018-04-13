@@ -81,8 +81,8 @@ def op2code(op:Operator):
     return ConvertTable[op]
 
 
-class IR:
-    """ Intermediate representation
+class TAC:
+    """ Triple address code
     """
     def __init__(self, code:Code, ret, first, second=None, cond=None):
         """ code: Code instance.

@@ -6,3 +6,4 @@ from . import ast
 from . import parse
 from . import ir
 from . import translate
+from . import vm

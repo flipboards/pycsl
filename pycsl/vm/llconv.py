@@ -1,151 +1,225 @@
 """ Convert pycsl.IR ==> LLVM.IR
 """
 
-from ..translate import Translater, ValType
-from ..ir import Block, Array, Identifier, MemoryLoc, Code, IR
+from ..translate import Translater, ValType, Value
+from ..ir import Block, Array, Identifier, MemoryLoc, Code, TAC, Pointer
 from ..util.ioutil import StrWriter
+
 
 class LLConverter:
 
     def __init__(self, translater:Translater):
+        """ Add a translater object
+        """
         self.writer = None
         self.translater = translater
 
-    def write(self, output=None):
-        self.writer = StrWriter(output, '%s')
+    def output(self, filename=None):
+        """ filename: None==> stdout; name ==> open filename and write it;
+        """
+        self.writer = StrWriter(filename, '%s')
         for name, val in self.translater.global_values.items():
-            self.write_global_var(name, val)
+            self.format_global_var(name, val)
 
         for fsig, fid in self.translater.function_table.items():
-            self.write_block(fsig, self.translater.function[fid])
+            if fid is not None:
+                self.format_block(fsig, self.translater.functions[fid])
+            else:
+                self.format_function_decl(fsig)
 
-    def write_global_var(self, name, value):
+    def format_function_decl(self, signature):
+        self.writeln('declare %s @%s (%s)',
+            self.format_code(signature[2]),
+            str(signature[0]),
+            ', '.join((self.format_type(s) for s in signature[1]))
+        )
 
-        self.output('@%s = global' % name)
-
+    def format_global_var(self, name:str, value:Value):
+        """ 
+        """
         if not isinstance(value.type, Array):
-            self.output(self.convert_type(value.type))
-            self.output(value.val)
+            self.writeln('@%s = global %s %s',
+                name,
+                self.format_type(value.type),
+                str(value.val)
+            )
 
-        self.output_line('')
-
-    def write_block(self, signature, function:Block):
+    def format_block(self, signature, function:Block):
         
         name, argtypes, rettype = signature
         self.translater.curfunction = function
 
-        self.output_line('define %s @%s(%s) {' % (
-            self.convert_type(rettype),
+        self.writeln('\ndefine %s @%s(%s) {' ,
+            self.format_type(rettype),
             name,
-            ', '.join((self.convert_type(argtype) for argtype in argtypes))
-        ))
+            ', '.join((self.format_type(argtype) for argtype in argtypes))
+        )
 
         for code in function.codes:
-            self.write_code(code)
+            self.write('  ')
+            self.format_tac(code)
 
-        self.output_line('}')
+        self.writeln('}')
 
-    def write_code(self, code:IR):
+    def format_tac(self, tac:TAC):
         
-        if code.code == Code.HLT:
-            self.output_line('hlt')
+        if tac.code == Code.HLT:
+            self.writeln('hlt')
 
-        elif code.code == Code.RET:
-            if code.first:
-                self.output_line('ret %s' % self.convert_id_or_val(code.first))
+        elif tac.code == Code.RET:
+            self.writeln('ret %s', self.format_var(tac.first))
+
+        elif tac.code == Code.BR:
+            if tac.cond:
+                self.writeln('br %s, label %s, label %s',
+                    self.format_var(tac.cond),
+                    self.format_id(tac.first),
+                    self.format_id(tac.second)
+                )
             else:
-                self.output_line('ret')
+                self.writeln('br label %s', tac.first)
 
-        elif code.code == Code.BR:
-            if code.cond:
-                self.output_line('br %s, label %s, label %s' % (
-                    self.convert_id_or_val(code.cond),
-                    code.first,
-                    code.second
-                ))
-            else:
-                self.output_line('br label %s' % code.first)
+        elif tac.code == Code.ALLOC:
 
-        elif code.code == Code.ALLOC:
-            self.write('%s = alloc %s' % (
-                code.ret,
-                self.convert_type(code.first)
-                ))
+            if not isinstance(tac.first, Array):
 
-        elif code.code == Code.LOAD:
-            self.write('%s = load %s, %s' % (
-                code.ret,
-                self.convert_type(code.first).unref(),
-                self.convert_id_or_val(code.first)
-                ))
+                self.writeln('%s = alloca %s',
+                    self.format_id(tac.ret),
+                    self.format_type(tac.first)
+                )
 
-        elif code.code == Code.STORE:
-            self.write('store %s, %s' % (
-                self.convert_id_or_val(code.first),
-                self.convert_id_or_val(code.second)
-            ))
+        elif tac.code == Code.LOAD:
+            self.writeln('%s = load %s, %s',
+                self.format_id(tac.ret),
+                self.format_type(self.get_type(tac.ret)),
+                self.format_var(tac.first)
+            )
 
-        elif code.code == Code.GETPTR:
-            pass
+        elif tac.code == Code.STORE:
+            self.writeln('store %s, %s',
+                self.format_var(tac.first),
+                self.format_var(tac.second)
+            )
 
-        elif code.code >= Code.ADD and code.code < Code.POW:
+        elif tac.code == Code.GETPTR:
+            self.writeln('%s = getelementptr %s, %s, %s',
+                self.format_id(tac.ret),
+                self.format_type(self.get_type(tac.ret).unref_type()),
+                self.format_var(tac.first),
+                ', '.join((self.format_var(v) for v in tac.second))
+            )
+
+        elif tac.code.value >= Code.ADD.value and tac.code.value < Code.POW.value:
             tpabbr = 'i'
-            self.write('%s = %s%s %s, %s' % (
-                code.ret,
+            self.writeln('%s = %s%s %s, %s',
+                self.format_id(tac.ret),
                 tpabbr,
-                code.code,
-                self.convert_id_or_val(code.first),
-                self.convert_id_or_val(code.second)
-            ))
+                self.format_code(tac.code),
+                self.format_var(tac.first),
+                self.format_var(tac.second)
+            )
 
-        elif code.code == Code.POW:
+        elif tac.code == Code.POW:
             raise NotImplemented
 
-        elif code.code >= Code.AND and code.code < Code.NOT:
-            self.write('%s = %s %s, %s' % (
-                code.ret,
-                code.code,
-                self.convert_id_or_val(code.first),
-                self.convert_id_or_val(code.second)
-            ))
+        elif tac.code.value >= Code.AND.value and tac.code.value < Code.NOT.value:
+            self.writeln('%s = %s %s, %s',
+                self.format_id(tac.ret),
+                self.format_code(tac.code),
+                self.format_var(tac.first),
+                self.format_var(tac.second)
+            )
 
-        elif code.code == Code.NOT:
-            self.write('%s = icmp ne %s, 0' % (
-                code.ret,
-                self.convert_id_or_val(code.first)
-            ))
+        elif tac.code == Code.NOT:
+            self.writeln('%s = icmp ne %s, 0',
+                tac.ret,
+                self.format_var(tac.first)
+            )
 
-        elif code.code >= Code.EQ and code.code < Code.PHI:
-            self.write('%s = icmp %s %s, %s' % (
-                code.ret,
-                code.code,
-                self.convert_id_or_val(code.first),
-                self.convert_id_or_val(code.second)
-            ))
+        elif tac.code >= Code.EQ and tac.code < Code.PHI:
+            self.writeln('%s = icmp %s %s, %s',
+                self.format_id(tac.ret),
+                self.format_code(tac.code),
+                self.format_var(tac.first),
+                self.format_var(tac.second)
+            )
 
-        elif code.code == Code.PHI:
-            pass
+        elif tac.code == Code.PHI:
+            self.writeln('%s = phi %s [%s %s] [%s %s]',
+                self.format_id(tac.ret),
+                self.format_type(self.get_type(tac.ret)),
+                self.format_var(tac.first[0]),
+                self.format_id(tac.first[1]),
+                self.format_var(tac.second[0]),
+                self.format_id(tac.second[1])
+            )
 
-        elif code.code == Code.CALL:
-            pass
+        elif tac.code == Code.CALL:
+
+            self.writeln('%s = call %s @%s(%s)',
+                self.format_id(tac.ret),
+                self.format_type(self.get_type(tac.ret)),
+                str(tac.first[0]),
+                ', '.join((self.format_var(v) for v in tac.second))
+            )
 
         else:
             raise RuntimeError()
 
-    def convert_id_or_val(self, id_or_val):
-            
-        return '%s %s' % (self.convert_type(self.translater.get_vartype(id_)), id_or_val)
+    def get_type(self, id_or_val):
+        return self.translater.get_vartype(id_or_val)
 
-    def convert_type(self, tp):
-        TypeLoc = {
-            ValType.BOOL: 'i1',
-            ValType.CHAR: 'i8',
-            ValType.INT: 'i32'
-        }
-        return TypeLoc[tp]
+    def format_code(self, code:Code):
+        return code.name.lower()
 
-    def output(self, obj):
+    def format_id(self, id_:Identifier):
+        
+        if id_.loc == MemoryLoc.GLOBAL:
+            return '@%s' % str(id_.addr)
+        else:
+            return '%%%d' % id_.addr
+
+    def format_var(self, id_or_val):
+        """ id/var ==> 'type id/var'
+        """
+
+        if isinstance(id_or_val, Identifier):
+            return '%s %s' % (
+                self.format_type(self.get_type(id_or_val)),
+                self.format_id(id_or_val)
+                )
+
+        elif isinstance(id_or_val, Value):
+            if id_or_val.type == ValType.VOID:
+                return 'void'
+            else:
+                return '%s %s' % (self.format_type(id_or_val.type), str(id_or_val.val))
+
+        else:
+            raise RuntimeError()
+
+    def format_type(self, tp):
+
+        if isinstance(tp, Pointer):
+            return self.format_type(tp.unref_type()) + ' *'
+
+        elif isinstance(tp, Array):
+            return '[%d x %s]' % (tp.size, self.format_type(tp.type))
+
+        elif isinstance(tp, ValType):
+
+            TypeLoc = {
+                ValType.BOOL: 'i1',
+                ValType.CHAR: 'i8',
+                ValType.INT: 'i32'
+            }
+            return TypeLoc[tp]
+
+        else:
+            raise RuntimeError()
+
+    def writeln(self, string:str, *args):
+        self.writer.writeln(string % args)
+
+    def write(self, obj):
         self.writer.writeword(obj)
-
-    def output_line(self, obj):
-        self.writer.writeln(obj)

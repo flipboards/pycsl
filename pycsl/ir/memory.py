@@ -5,6 +5,26 @@ from enum import Enum
 from collections import namedtuple
 
 
+class Register(namedtuple('Register', ['type'])):
+    """ Stores a register (temporary variable in a function)
+        type: can be ValType, Pointer;
+    """
+
+    def __repr__(self):
+        return '<Register %r>' % str(self.type)
+
+    def __str__(self):
+        return '[%s]' % str(self.type)
+
+
+class Label:
+    """ Label type;
+    """
+
+    def __init__(self):
+        self.addr = None
+
+
 class Block:
 
     def __init__(self):
