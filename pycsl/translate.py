@@ -25,14 +25,18 @@ class Side:
 
 class Translater:
 
-    ARRAY_SIZE_LIMIT = 16384
+    ARRAY_SIZE_LIMIT = 16384        # maximum size of single array decalared
+    POINTER_ARITHMETIC = True       # allow add and sub between pointers with same type
+    POINTER_TO_VAL = False          # allow cast pointer to int
+    ARRAY_POINTER_DECAY = False     # allow cast array pointer to value pointer
+    EXPLICIT_TYPE = True            # type must be explicitly declared (not allow void)
 
     def __init__(self):
 
         # symbol tables
         self.global_sym_table = dict()  # dict{string: Register}
         self.function_table = dict()    # dict{function name: function signature}
-        self.sym_table_stack = [dict()] # dict{string <-- var name:Identifier <-- register id}
+        self.sym_table_stack = []       # dict{string <-- var name:Identifier <-- register id}
         
         # functions
         self.functions = []             # list [Block]
@@ -40,6 +44,7 @@ class Translater:
 
         # temporary variables
         self.curfunction = None
+        self.currettype = None
         self.looplabelstack = []
 
     def clear(self):
@@ -92,6 +97,8 @@ class Translater:
 
         self.functions.append(Block())
         self.curfunction = self.functions[-1]
+        self.currettype = rettype
+        self.looplabelstack.clear()
 
         self.sym_table_stack.append(dict())
 
@@ -117,6 +124,11 @@ class Translater:
         self._translate_stmt(ast.nodes[1])
         self.sym_table_stack.pop()
 
+        assert len(self.sym_table_stack) == 0
+        assert len(self.looplabelstack) == 0
+        self.curfunction = None
+        self.currettype = None
+
     def _translate_function_decl(self, ast:AST):
         """ Translate function declaration.
             The root must be ASTType.DECL and DeclNode.FUNCDECL.
@@ -140,7 +152,16 @@ class Translater:
             assert arg_node.nodes[0].type == ASTType.NAME
 
             argnames.append(arg_node.nodes[0].value.name)
-            argtypes.append(arg_node.nodes[1].value if len(arg_node.nodes) == 2 else ValType.VOID)
+
+            if len(arg_node.nodes) == 2:
+                assert arg_node.nodes[1].type == ASTType.TYPE
+                argtypes.append(arg_node.nodes[1].value)
+
+            elif not Translater.EXPLICIT_TYPE:
+                argtypes.append(ValType.VOID)
+
+            else:
+                raise CompileError('Function argument type must be explicitly stated')
         
         rettype = ast.nodes[2].value if len(ast.nodes) == 3 else ValType.VOID
 
@@ -182,10 +203,9 @@ class Translater:
     def _translate_ctrl(self, ast:AST):
         
         if ast.value == Keyword.IF:
+            varcond = self._translate_expr(ast.nodes[0]) ## TODO: Type check
             lbltrue = self.create_label()
             lblfalse = self.create_label()
-
-            varcond = self._translate_expr(ast.nodes[0]) ## TODO: Type check
             self.write(Code.BR, None, lbltrue, lblfalse, cond=varcond)
             self.insert_label(lbltrue)
             self._translate_stmt(ast.nodes[1])
@@ -202,14 +222,14 @@ class Translater:
                 self.insert_label(lblfalse)
 
         elif ast.value == Keyword.WHILE:
+
             lblbegin = self.create_label()
+            self.insert_label(lblbegin)
+            varcond = self._translate_expr(ast.nodes[0])
             lblloop = self.create_label()
             lblend = self.create_label()
-
-            self.insert_label(lblbegin)
-            self.looplabelstack.append((lblbegin, lblend))
-            varcond = self._translate_expr(ast.nodes[0])
             self.write(Code.BR, None, lblloop, lblend, cond=varcond)
+            self.looplabelstack.append((lblbegin, lblend))
             self.insert_label(lblloop)
             self._translate_stmt(ast.nodes[1])
             self.write(Code.BR, None, lblbegin)
@@ -217,17 +237,17 @@ class Translater:
             self.looplabelstack.pop()
 
         elif ast.value == Keyword.FOR:
-            lblbegin = self.create_label()
-            lblloop = self.create_label()
-            lblctn = self.create_label()
-            lblend = self.create_label()
 
             self._translate_expr(ast.nodes[0])
+            lblbegin = self.create_label()
             self.insert_label(lblbegin)
-            self.looplabelstack.append((lblctn, lblend))
             varcond = self._translate_expr(ast.nodes[1])
+            lblloop = self.create_label()
+            lblend = self.create_label()
             self.write(Code.BR, None, lblloop, lblend, cond=varcond)
             self.insert_label(lblloop)
+            lblctn = self.create_label()
+            self.looplabelstack.append((lblctn, lblend))
             self._translate_stmt(ast.nodes[3])
             self.write(Code.BR, None, lblctn)
             self.insert_label(lblctn)
@@ -248,10 +268,14 @@ class Translater:
 
         elif ast.value == Keyword.RETURN:
             if not ast.nodes:
-                self.write(Code.RET, None, Value(ValType.VOID, None))
+                if Translater.EXPLICIT_TYPE and self.currettype == ValType.VOID:
+                    return Value(ValType.VOID, None)
+                else:
+                    raise CompileError('Must return a value')
             else:
-                varret = self._translate_expr(ast.nodes[0])
-                self.write(Code.RET, None, varret)
+                valret = self._translate_expr(ast.nodes[0])
+                valret_cast = valret if self.get_vartype(valret) == self.currettype else self._translate_typecast(valret, self.currettype)
+                self.write(Code.RET, None, valret_cast)
 
         else:
             raise RuntimeError()
@@ -308,19 +332,25 @@ class Translater:
             """ Translate continues subscripts. Notice: assignment is not allowed in indexer.
             """
             if mast.value != Operator.LSUB:
-                return self._translate_expr(mast, Side.LHS, *args[1:])
+                arr = self._translate_expr(mast, Side.LHS, *args[1:])
+                arrtype = self.get_vartype(arr) 
+                if not isinstance(arrtype, Pointer) or not (isinstance(arrtype.unref_type(), Pointer) or isinstance(arrtype.unref_type(), Array)):
+                    raise CompileError('Subscript may only applied to pointer or array')
+                return arr
             else:
                 lhs = translate_subscript(mast.nodes[0], subarray)
-                subarray.append(self._translate_expr(mast.nodes[1], Side.RHS, *args[1:]))
+                idx = self._translate_expr(mast.nodes[1], Side.RHS, *args[1:])
+                idx_cast = idx if self.get_vartype(idx) == ValType.INT else self._translate_typecast(idx, ValType.INT)
+                subarray.append(idx_cast)
                 return lhs 
 
         def translate_array_index(mast):
             """ Translate array indexing, return the pointer to array element;
                 Currently unsupport pointer;
             """
-            subarray = []
+            subarray = [Value(ValType.INT, 0)]
             valarr = translate_subscript(mast, subarray)
-            valptr = self.create_reg(self.get_vartype(valarr))
+            valptr = self.create_reg(Pointer(self.get_vartype(valarr).unref_type().type))
             self.write(Code.GETPTR, valptr, valarr, subarray)  # %valptr = getptr %valarr %subarray
             return valptr
 
@@ -362,18 +392,21 @@ class Translater:
             if OpAryLoc[operator] == 2:
                 valrhs = self._translate_expr(ast.nodes[1], Side.RHS, *args)
                 vallhs = self._translate_expr(ast.nodes[0], Side.LHS, *args)
+                typelhs = self.get_vartype(vallhs).unref_type() # valllhs is supposed to be a Pointer
+                typerhs = self.get_vartype(valrhs)
+                valrhs_cast = valrhs if typelhs == typerhs else self._translate_typecast(valrhs, typelhs)
 
                 if code is not None:
-                    typelhs = self.get_vartype(vallhs).unref_type() # valllhs is supposed to be a Pointer
                     rvallhs = self.create_reg(typelhs) 
                     self.write(Code.LOAD, rvallhs, vallhs)
-                    valret = self.create_reg() # type cast here
-                    self.write(code, valret, rvallhs, valrhs)
+
+                    valret = self.create_reg(typelhs)
+                    self.write(code, valret, rvallhs, valrhs_cast)
                     self.write(Code.STORE, None, valret, vallhs)
                     
                     return valret
                 else:
-                    self.write(Code.STORE, None, valrhs, vallhs)
+                    self.write(Code.STORE, None, valrhs_cast, vallhs)
                     
                     return valrhs
 
@@ -402,13 +435,20 @@ class Translater:
             typelhs = self.get_vartype(vallhs)
             if OpAryLoc[operator] == 2:
 
-                if lazyeval and operator in (Operator.AND, Operator.OR):
+           #     if lazyeval and operator in (Operator.AND, Operator.OR):
            #         return self._translate_lazyevalbool(code, vallhs, ast.nodes[1], *args)
-                    pass
+           #         pass
 
                 valrhs = self._translate_expr(ast.nodes[1], Side.RHS, *args)
-                valret = self.create_reg() # type cast here
-                self.write(code, valret, vallhs, valrhs)
+                typerhs = self.get_vartype(valrhs)
+                ptr_arithmetic = operator in (Operator.ADD, Operator.SUB) and Translater.POINTER_ARITHMETIC
+                typeret = self.get_target_type(typelhs, typerhs, ptr_arithmetic)
+
+                vallhs_cast = self._translate_typecast(vallhs, typeret) if typelhs != typeret else vallhs
+                valrhs_cast = self._translate_typecast(valrhs, typeret) if typerhs != typeret else valrhs
+
+                valret = self.create_reg(typeret)
+                self.write(code, valret, vallhs_cast, valrhs_cast)
 
             # -, not    
             else:   
@@ -494,13 +534,15 @@ class Translater:
         if len(argtypes) != len(argids):
             raise CompileError("Argument number not match")
 
+        argids_cast = []
         for argid, argtype in zip(argids, argtypes):
-            if self.get_vartype(argid) != argtype:
-                # emit type cast code here
-                pass
+            if self.get_vartype(argid) == argtype:
+                argids_cast.append(argid)
+            else:
+                argids_cast.append(self._translate_typecast(argid, argtype))
 
         ret = self.create_reg(rettype)
-        self.write(Code.CALL, ret, funcname, argids)
+        self.write(Code.CALL, ret, funcname, argids_cast)
         return ret 
 
     def _translate_decl(self, ast:AST, isglobal):
@@ -616,7 +658,8 @@ class Translater:
                 initializer = Value(vartype, init_array)
 
             self.global_sym_table[varname] = Register(Pointer(vartype))
-            self.global_values[varname] = initializer
+            initialzer_cast = initializer if initializer.type == typename else self._translate_typecast(initializer, typename)
+            self.global_values[varname] = initialzer_cast
 
         else:
 
@@ -634,17 +677,153 @@ class Translater:
 
             elif not arrshape:
                 initializer = self._translate_expr(ast.nodes[1])
-                self.write(Code.STORE, None, initializer, varid)
+                initialzer_cast = initializer if self.get_vartype(initializer) == typename else self._translate_typecast(initializer, typename)
+                self.write(Code.STORE, None, initialzer_cast, varid)
 
             else:
 
                 # fill 0 for the whole array here (memcpy)
 
                 for c, v in convert_init_list(ast.nodes[1]):
+                    v_cast = v if self.get_vartype(v) == typename else self._translate_typecast(v, typename)                    
                     elemptr = self.create_reg(Pointer(typename))
                     self.write(Code.GETPTR, elemptr, varid, c)
-                    self.write(Code.STORE, None, v, elemptr)
+                    self.write(Code.STORE, None, v_cast, elemptr)
 
+    def _translate_typecast(self, var_or_id, target_type):
+        
+        src_type = self.get_vartype(var_or_id)
+
+        if Translater.EXPLICIT_TYPE and target_type == ValType.VOID:
+            raise CompileError('An explicit type is required, not void')
+
+        elif target_type == ValType.VOID:
+            return var_or_id
+
+        elif src_type == ValType.VOID and isinstance(target_type, ValType):
+            return Value(src_type, target_type)
+
+        else:
+            raise CompileError('Cannot cast type "void" to "%s"' % target_type)
+
+        # var_or_id.type 
+        if isinstance(var_or_id, Value):
+            
+            assert not isinstance(target_type, Array) and not isinstance(src_type, Array)
+
+            if (isinstance(target_type, Pointer) and isinstance(src_type, Pointer)) or (
+                isinstance(target_type, ValType) and isinstance(src_type, ValType)):
+                return Value(target_type, var_or_id.val)
+            
+            elif Translater.POINTER_TO_VAL:
+                return Value(tar)
+
+            else:
+                raise CompileError('Cannot cast type %s to %s' % (src_type, target_type))
+
+        elif isinstance(var_or_id, Identifier):
+
+            if isinstance(src_type, ValType):
+                if isinstance(target_type, ValType):
+
+                    target = self.create_reg(target_type)
+                    if src_type.value < ValType.FLOAT.value and target_type.value < ValType.FLOAT.value:
+                        code = Code.EXT if src_type.value < target_type.value else Code.TRUNC
+                    else:
+                        code = Code.ITOF if src_type == ValType.FLOAT else Code.FTOI
+                        
+                    self.write(code, target, var_or_id, target_type)
+
+                elif Translater.POINTER_TO_VAL and isinstance(target_type, Pointer):
+
+                    if src_type.value < ValType.INT.value:
+                        target1 = self.create_reg(ValType.INT)
+                        self.write(Code.EXT, target1, var_or_id, ValType.INT)
+                    elif src_type.value == ValType.INT.value:
+                        target1 = var_or_id
+                    else:
+                        raise CompileError('Cannot cast float to pointer')
+
+                    target = self.create_reg(target_type)                    
+                    self.write(Code.ITOP, target, target1, target_type)
+
+                else:
+                    raise CompileError('Cannot cast %s to %s' % (src_type, target_type))
+
+            elif isinstance(src_type, Pointer):
+
+                if Translater.POINTER_TO_VAL and isinstance(target_type, ValType):
+
+                    if target_type != ValType.FLOAT:
+                        target = self.create_reg(target_type)                    
+                        self.write(Code.PTOI, target, var_or_id, target_type)
+                    else:
+                        raise CompileError('Cannot cast pointer to float')
+
+                elif isinstance(target_type, Pointer):
+                    target = self.create_reg(target_type)
+                    self.write(Code.BITC, target, var_or_id, target_type)
+
+                else:
+                    raise CompileError('Cannot cast %s to %s' % (src_type, target_type))
+
+            elif isinstance(src_type, Array):
+                if Translate.ARRAY_POINTER_DECAY and isinstance(target_type, Pointer):
+                    if src_type.type == target_type.type:
+                        target = self.create_reg(target_type)
+                        self.write(Code.GETPTR, target, var_or_id, Value(ValType.INT, 0))
+                    else:
+                        raise CompileError('Cannot cast array to pointer with different type')
+
+                else:
+                    raise CompileError('Cannot cast %s to %s' % (src_type, target_type))
+
+            else:
+                raise RuntimeError()
+
+            return target
+
+        else:
+            raise RuntimeError()
+
+    def get_target_type(self, type1, type2, ptr_arithmetic=False):
+        """ Returns the type cast target.
+        """
+
+        if isinstance(type1, ValType) and isinstance(type2, ValType):
+            return ValType(max(type1.value, type2.value))
+
+        elif ptr_arithmetic:
+
+            if isinstance(type1, Pointer) and isinstance(type2, Pointer):
+                if type1.unref_type() == type2.unref_type():
+                    return ValType.INT
+                else:
+                    raise CompileError("Cannot perform calculation between different type pointers")
+
+            elif isinstance(type1, Pointer) and isinstance(type2, ValType):
+                if type2 == ValType.INT:
+                    return ValType.INT
+
+            elif isinstance(type2, Pointer) and isinstance(type1, ValType):
+                if type1 == ValType.INT:
+                    return ValType.INT            
+
+            elif Translater.ARRAY_POINTER_DECAY:
+
+                if isinstance(type1, Array) and isinstance(type2, ValType):
+                    if type2 == ValType.INT:
+                        return ValType.INT
+
+                elif isinstance(type2, Array) and isinstance(type1, ValType):
+                    if type1 == ValType.INT:
+                        return ValType.INT           
+                
+                elif type1.type == type2.type: # Array - ?
+                    return ValType.INT
+
+
+        raise CompileError('Cannot perform calculation between type "%s" and "%s"' % (type1, type2))
 
     def create_reg(self, mtype=None):
         """ Create a temporary variable that can be in stack top/register

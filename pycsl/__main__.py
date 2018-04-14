@@ -1,19 +1,48 @@
 
-import sys 
+import sys
 
-from . import parse
-from .ast import printast
+if __name__ == '__main__':
 
-def main(argv):
+    if len(sys.argv) == 1 or sys.argv[1] == '-h':
+        print('''Please use 'cslc' / 'csl' to start pycsl.
+        ''')
+        exit(0)
 
-    parser = parse.Parser()
-    sym_table = {}
+    if sys.argv[1] == 'compile':
 
-    while True:
+        if '-h' in sys.argv[2:]:
+            print('''cslc [ARGS...] [FILE]
+Additional arguments will be passed to llc.''')
+            exit(0)
 
-        line = input()
-        ast = parser.parse_line(line, sym_table)
-        printast(ast)
+        filename = None
 
+        for arg in sys.argv[2:]:
+            if arg[0] != '-':
+                filename = arg
 
-main(sys.argv)
+        if not filename:
+            print('Error: No input files')
+            exit(1)
+
+        import os
+        from . import parse, ast, translate, vm
+
+        parser = parse.Parser()
+        tree = parser.parse_file(filename)
+        translater = translate.Translater()
+        translater.translate(tree)
+        converter = vm.LLConverter(translater)
+        irfilename = filename.rsplit('.', 1)[0] + '.ll'
+        converter.output(irfilename)
+
+        if not '-emit-llvm' in sys.argv[2:]:
+            os.system('llc %s %s' % ( ' '.join(sys.argv[2:]), filename))
+            os.remove(irfilename)
+
+    elif sys.argv[1] == 'interpret':
+
+        pass
+
+    else:
+        print('Error: Unknown command %s' % sys.argv[1])

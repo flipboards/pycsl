@@ -32,15 +32,24 @@ class Code(Enum):
     STORE = 32
     GETPTR = 33
 
+    # Type casting
+    EXT = 40
+    TRUNC = 41
+    ITOF = 42
+    FTOI = 43
+    ITOP = 44
+    PTOI = 45
+    BITC = 46
+
     # Control
-    EQ = 40
-    NE = 41
-    LT = 42
-    LE = 43
-    GT = 44
-    GE = 45
-    PHI = 46
-    CALL = 47
+    EQ = 50
+    NE = 51
+    LT = 52
+    LE = 53
+    GT = 54
+    GE = 55
+    PHI = 56
+    CALL = 57
 
     def __str__(self):
         return self.name.lower()

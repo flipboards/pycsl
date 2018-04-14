@@ -1,0 +1,11 @@
+#!/bin/sh
+
+if  command -v llc ; then
+
+    python3 -m pycsl compile $@ 
+
+else
+
+    echo 'Fatal: LLVM compiler has not installed'
+
+fi
