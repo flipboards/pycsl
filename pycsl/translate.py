@@ -250,8 +250,8 @@ class Translater:
 
             self._translate_expr(ast.nodes[0])
             lblbegin = self.create_label()
-            self.insert_label(lblbegin)
             self.write(Code.BR, None, lblbegin)
+            self.insert_label(lblbegin)
             varcond = self._translate_expr(ast.nodes[1])
             lblloop = self.create_label()
             lblend = self.create_label()

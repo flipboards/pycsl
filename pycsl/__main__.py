@@ -37,7 +37,8 @@ Additional arguments will be passed to llc.''')
         converter.output(irfilename)
 
         if not '-emit-llvm' in sys.argv[2:]:
-            os.system('llc %s %s' % ( ' '.join(sys.argv[2:]), filename))
+            sys.argv.remove(filename)
+            os.system('clang %s %s' % ( ' '.join(sys.argv[2:]), irfilename))
             os.remove(irfilename)
 
     elif sys.argv[1] == 'interpret':
