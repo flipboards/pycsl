@@ -46,10 +46,12 @@ class Translater:
         self.curfunction = None
         self.currettype = None
         self.looplabelstack = []
+        self.labelidpool = []
 
     def clear(self):
         self.curfunction = None
         self.looplabelstack.clear()
+        self.labelidpool.clear()
 
     def translate(self, ast:AST):
         """ Translate the whole block
@@ -99,6 +101,7 @@ class Translater:
         self.curfunction = self.functions[-1]
         self.currettype = rettype
         self.looplabelstack.clear()
+        self.labelidpool.clear()
 
         self.sym_table_stack.append(dict())
 
@@ -123,6 +126,12 @@ class Translater:
 
         self._translate_stmt(ast.nodes[1])
         self.sym_table_stack.pop()
+
+        if Translater.EXPLICIT_TYPE and self.curfunction.codes[-1].code != Code.RET:
+            if rettype != ValType.VOID:
+                raise CompileError('Function "%s" must return a value' % funcname)
+            else:
+                self.write(Code.RET, None, Value(ValType.VOID, None))
 
         assert len(self.sym_table_stack) == 0
         assert len(self.looplabelstack) == 0
@@ -224,6 +233,7 @@ class Translater:
         elif ast.value == Keyword.WHILE:
 
             lblbegin = self.create_label()
+            self.write(Code.BR, None, lblbegin)
             self.insert_label(lblbegin)
             varcond = self._translate_expr(ast.nodes[0])
             lblloop = self.create_label()
@@ -241,6 +251,7 @@ class Translater:
             self._translate_expr(ast.nodes[0])
             lblbegin = self.create_label()
             self.insert_label(lblbegin)
+            self.write(Code.BR, None, lblbegin)
             varcond = self._translate_expr(ast.nodes[1])
             lblloop = self.create_label()
             lblend = self.create_label()
@@ -447,6 +458,10 @@ class Translater:
                 vallhs_cast = self._translate_typecast(vallhs, typeret) if typelhs != typeret else vallhs
                 valrhs_cast = self._translate_typecast(valrhs, typeret) if typerhs != typeret else valrhs
 
+                # compare
+                if operator.value >= Operator.EQ.value and operator.value <= Operator.GE.value:
+                    typeret = ValType.BOOL
+
                 valret = self.create_reg(typeret)
                 self.write(code, valret, vallhs_cast, valrhs_cast)
 
@@ -541,9 +556,12 @@ class Translater:
             else:
                 argids_cast.append(self._translate_typecast(argid, argtype))
 
-        ret = self.create_reg(rettype)
-        self.write(Code.CALL, ret, funcname, argids_cast)
-        return ret 
+        if Translater.EXPLICIT_TYPE and rettype == ValType.VOID:
+            self.write(Code.CALL, None, signature, argids_cast)
+        else:
+            ret = self.create_reg(rettype)
+            self.write(Code.CALL, ret, signature, argids_cast)
+            return ret 
 
     def _translate_decl(self, ast:AST, isglobal):
         """ Translate variable decalaration
@@ -832,13 +850,24 @@ class Translater:
         return Identifier(MemoryLoc.LOCAL, len(self.curfunction.registers) - 1)   
 
     def create_label(self):
-        self.curfunction.registers.append(Label())
-        return Identifier(MemoryLoc.LOCAL, len(self.curfunction.registers) - 1)
+        self.labelidpool.append(Identifier(MemoryLoc.LOCAL, None))
+        return self.labelidpool[-1]
 
-    def insert_label(self, label_id):
+    def insert_label(self, label_id:Identifier):
         """ Pointer label with label_id to next code
         """
-        self.locate(label_id).addr = len(self.curfunction.codes)
+        target_addr = len(self.curfunction.codes)
+
+        # check if already exists
+        for i, reg in enumerate(self.curfunction.registers):
+            if isinstance(reg, Label) and reg.addr == target_addr:
+                label_id.addr = i 
+                self.labelidpool.remove(label_id)
+                return
+
+        label_id.addr = len(self.curfunction.registers)
+        self.curfunction.registers.append(Label(target_addr))
+        self.labelidpool.remove(label_id)
 
     def locate(self, id_):
         """ id_: Identifier;
@@ -851,7 +880,7 @@ class Translater:
             return self.curfunction.registers[id_.addr]
 
         else:
-            raise RuntimeError()
+            raise RuntimeError('Cannot recognize id: %r' % str(id_))
 
     def get_vartype(self, value_or_id):
         """ Returns the type of variable / value
@@ -864,7 +893,7 @@ class Translater:
             return self.locate(value_or_id).type
 
         else:
-            raise RuntimeError()
+            raise RuntimeError('Cannot recognize variable: %r' % str(value_or_id))
 
     def write(self, code, ret, first=None, second=None, *args, **kwargs):
 

@@ -26,6 +26,14 @@ class LLConverter:
         Code.BITC: 'bitcast'
     }
 
+    _CmpCodeLoc = {
+        Code.EQ: 'eq',
+        Code.NE: 'ne',
+        Code.LT: 'slt',
+        Code.LE: 'sle',
+        Code.GT: 'sgt',
+        Code.GE: 'sge'
+    }
 
     def __init__(self, translater:Translater):
         """ Add a translater object
@@ -48,7 +56,7 @@ class LLConverter:
 
     def format_function_decl(self, signature):
         self.writeln('declare %s @%s (%s)',
-            self.format_code(signature[2]),
+            self.format_type(signature[2]),
             str(signature[0]),
             ', '.join((self.format_type(s) for s in signature[1]))
         )
@@ -128,6 +136,10 @@ class LLConverter:
 
         elif tac.code.value >= Code.ADD.value and tac.code.value < Code.POW.value:
             tpabbr = ''
+
+            if tac.code in (Code.MUL, Code.DIV, Code.REM):
+                tpabbr = 's'
+
             self.writeln('%s = %s%s %s %s, %s',
                 self.format_id(tac.ret),
                 tpabbr,
@@ -170,8 +182,8 @@ class LLConverter:
             self.writeln('%s = %scmp %s %s %s, %s',
                 self.format_id(tac.ret),
                 tpabbr,
-                self.format_code(tac.code),
-                self.format_type(self.get_type(tac.ret)),
+                LLConverter._CmpCodeLoc[tac.code],
+                self.format_type(self.get_type(tac.first)),
                 self.format_var(tac.first),
                 self.format_var(tac.second)
             )
@@ -188,12 +200,19 @@ class LLConverter:
 
         elif tac.code == Code.CALL:
 
-            self.writeln('%s = call %s @%s(%s)',
-                self.format_id(tac.ret),
-                self.format_type(self.get_type(tac.ret)),
-                str(tac.first[0]),
-                ', '.join((self.format_var_with_type(v) for v in tac.second))
-            )
+            if tac.ret is not None:
+
+                self.writeln('%s = call %s @%s(%s)',
+                    self.format_id(tac.ret),
+                    self.format_type(self.get_type(tac.ret)),
+                    str(tac.first[0]),
+                    ', '.join((self.format_var_with_type(v) for v in tac.second))
+                )
+            else:
+                self.writeln('call void @%s(%s)',
+                    str(tac.first[0]),
+                    ', '.join((self.format_var_with_type(v) for v in tac.second))
+                )
 
         else:
             raise RuntimeError()

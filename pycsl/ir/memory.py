@@ -21,8 +21,8 @@ class Label:
     """ Label type;
     """
 
-    def __init__(self):
-        self.addr = None
+    def __init__(self, addr=None):
+        self.addr = addr
 
 
 class Block:
@@ -38,7 +38,11 @@ class MemoryLoc(Enum):
     LOCAL = 1
 
 
-class Identifier(namedtuple('Identifier', ['loc', 'addr'])):
+class Identifier:
+
+    def __init__(self, loc:MemoryLoc, addr):
+        self.loc = loc 
+        self.addr = addr 
     
     def __repr__(self):
         return '<Identifier %r>' % self.addr

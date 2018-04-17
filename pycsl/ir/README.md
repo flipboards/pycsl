@@ -56,7 +56,14 @@ not     |id         |value_or_id|value_or_id|           |will be changed to icmp
 alloc   |id         |type       |           |           |
 load    |id         |id         |           |           |
 store   |           |id         |id         |           |
-getptr  |id         |id         |list of voi|           |
+getptr  |id         |id         |list of voi|           |same as 'getelementptr' in LLVM
+ext     |id         |value_or_id|type       |           |signed extension, same below.
+trunc   |id         |value_or_id|type       |           |
+itof    |id         |value_or_id|type       |           |
+ftoi    |id         |value_or_id|type       |           |
+itop    |id         |value_or_id|type       |           |
+ptoi    |id         |value_or_id|type       |           |
+bitc    |id         |value_or_id|type       |           |
 eq      |id         |value_or_id|value_or_id|           |
 ne      |id         |value_or_id|value_or_id|           |
 lt      |id         |value_or_id|value_or_id|           |
@@ -64,4 +71,5 @@ le      |id         |value_or_id|value_or_id|           |
 ge      |id         |value_or_id|value_or_id|           |
 phi     |id         |(voi, label)|(voi, label)|         |
 call    |id         |function   |list of voi|           |
+call    |           |function   |list of voi|           |
 
