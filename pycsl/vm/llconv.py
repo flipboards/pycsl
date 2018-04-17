@@ -1,8 +1,10 @@
 """ Convert pycsl.IR ==> LLVM.IR
 """
 
+import struct 
+
 from ..translate import Translater, ValType, Value
-from ..ir import Block, Array, Identifier, MemoryLoc, Code, TAC, Pointer
+from ..ir import Block, Array, Identifier, MemoryLoc, Code, TAC, Pointer, Label
 from ..util.ioutil import StrWriter
 
 
@@ -26,7 +28,7 @@ class LLConverter:
         Code.BITC: 'bitcast'
     }
 
-    _CmpCodeLoc = {
+    _IcmpCodeLoc = {
         Code.EQ: 'eq',
         Code.NE: 'ne',
         Code.LT: 'slt',
@@ -35,11 +37,22 @@ class LLConverter:
         Code.GE: 'sge'
     }
 
+    _FcmpCodeLoc = {
+        Code.EQ: 'ueq',
+        Code.NE: 'une',
+        Code.LT: 'ult',
+        Code.LE: 'ule',
+        Code.GT: 'ugt',
+        Code.GE: 'uge'
+    }
+
     def __init__(self, translater:Translater):
         """ Add a translater object
         """
         self.writer = None
         self.translater = translater
+
+        self.cur_pred = None
 
     def output(self, filename=None):
         """ filename: None==> stdout; name ==> open filename and write it;
@@ -82,13 +95,15 @@ class LLConverter:
             ', '.join((self.format_type(argtype) for argtype in argtypes))
         )
 
-        for code in function.codes:
+        self.cur_pred = len(argtypes)
+
+        for idx, code in enumerate(function.codes):
             self.write('  ')
-            self.format_tac(code)
+            self.format_tac(code, idx)
 
         self.writeln('}')
 
-    def format_tac(self, tac:TAC):
+    def format_tac(self, tac:TAC, idx:int):
         
         if tac.code == Code.HLT:
             self.writeln('hlt')
@@ -105,6 +120,9 @@ class LLConverter:
                 )
             else:
                 self.writeln('br label %s', tac.first)
+
+            self.cur_pred = self.get_pred(idx + 1)
+            self.writeln('; <label>:%d:', self.cur_pred)
 
         elif tac.code == Code.ALLOC:
 
@@ -135,10 +153,13 @@ class LLConverter:
             )
 
         elif tac.code.value >= Code.ADD.value and tac.code.value < Code.POW.value:
-            tpabbr = ''
-
-            if tac.code in (Code.MUL, Code.DIV, Code.REM):
+            
+            if self.get_type(tac.first) == ValType.FLOAT:
+                tpabbr = 'f'
+            elif tac.code in (Code.MUL, Code.DIV, Code.REM):
                 tpabbr = 's'
+            else:
+                tpabbr = ''
 
             self.writeln('%s = %s%s %s %s, %s',
                 self.format_id(tac.ret),
@@ -162,7 +183,11 @@ class LLConverter:
             )
 
         elif tac.code == Code.NOT:
-            tpabbr = 'i'
+            
+            if self.get_type(tac.first) == ValType.FLOAT:
+                tpabbr = 'f'
+            else:
+                tpabbr = 'i'
             self.writeln('%s = %scmp ne %s, 0',
                 tac.ret,
                 tpabbr,
@@ -178,11 +203,15 @@ class LLConverter:
             )
 
         elif tac.code.value >= Code.EQ.value and tac.code.value < Code.PHI.value:
-            tpabbr = 'i'
+            
+            if self.get_type(tac.first) == ValType.FLOAT:
+                tpabbr = 'f'
+            else:
+                tpabbr = 'i'
             self.writeln('%s = %scmp %s %s %s, %s',
                 self.format_id(tac.ret),
                 tpabbr,
-                LLConverter._CmpCodeLoc[tac.code],
+                LLConverter._IcmpCodeLoc[tac.code] if tpabbr == 'i' else LLConverter._FcmpCodeLoc[tac.code],
                 self.format_type(self.get_type(tac.first)),
                 self.format_var(tac.first),
                 self.format_var(tac.second)
@@ -215,10 +244,17 @@ class LLConverter:
                 )
 
         else:
-            raise RuntimeError()
+            raise RuntimeError('Unrecognized TAC: %r' % str(tac))
 
     def get_type(self, id_or_val):
         return self.translater.get_vartype(id_or_val)
+
+    def get_pred(self, code_idx):
+        for i, reg in enumerate(self.translater.curfunction.registers):
+            if isinstance(reg, Label) and reg.addr == code_idx:
+                return i
+
+        raise RuntimeError('Cannot find label at address: %r' % code_idx)
 
     def format_code(self, code:Code):
         return code.name.lower()
@@ -235,10 +271,13 @@ class LLConverter:
             return self.format_id(id_or_val)
 
         elif isinstance(id_or_val, Value):
-            return str(id_or_val.val)
+            if id_or_val.type == ValType.FLOAT:
+                return '0x' + ''.join(['%02x' % b for b in struct.pack('>d', id_or_val.val)])
+            else:
+                return str(id_or_val.val)
 
         else:
-            raise RuntimeError()        
+            raise RuntimeError('Unrecognized variable: %r' % str(id_or_val))        
 
     def format_var_with_type(self, id_or_val):
         """ id/var ==> 'type id/var'
@@ -257,7 +296,7 @@ class LLConverter:
                 return '%s %s' % (self.format_type(id_or_val.type), str(id_or_val.val))
 
         else:
-            raise RuntimeError()
+            raise RuntimeError('Unrecognized variable: %r' % str(id_or_val))
 
     def format_type(self, tp):
 
@@ -272,7 +311,7 @@ class LLConverter:
             return LLConverter._TypeLoc[tp]
 
         else:
-            raise RuntimeError()
+            raise RuntimeError('Unrecognized type: %r' % str(tp))
 
     def writeln(self, string:str, *args):
         self.writer.writeln(string % args)

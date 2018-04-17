@@ -455,6 +455,9 @@ class Translater:
                 ptr_arithmetic = operator in (Operator.ADD, Operator.SUB) and Translater.POINTER_ARITHMETIC
                 typeret = self.get_target_type(typelhs, typerhs, ptr_arithmetic)
 
+                if isinstance(vallhs, Value) and isinstance(valrhs, Value):
+                    return eval_op(operator, vallhs, valrhs)
+
                 vallhs_cast = self._translate_typecast(vallhs, typeret) if typelhs != typeret else vallhs
                 valrhs_cast = self._translate_typecast(valrhs, typeret) if typerhs != typeret else valrhs
 
@@ -467,6 +470,10 @@ class Translater:
 
             # -, not    
             else:   
+
+                if isinstance(vallhs, Value):
+                    return eval_op(operator, vallhs)
+
                 valret = self.create_reg(typelhs)
                 self.write(code, valret, vallhs)
             return valret 
@@ -705,7 +712,12 @@ class Translater:
                 for c, v in convert_init_list(ast.nodes[1]):
                     v_cast = v if self.get_vartype(v) == typename else self._translate_typecast(v, typename)                    
                     elemptr = self.create_reg(Pointer(typename))
-                    self.write(Code.GETPTR, elemptr, varid, c)
+
+                    c_var = [Value(ValType.INT, 0)]
+                    for c_ in c:
+                        c_var.append(Value(ValType.INT, c_))
+
+                    self.write(Code.GETPTR, elemptr, varid, c_var)
                     self.write(Code.STORE, None, v_cast, elemptr)
 
     def _translate_typecast(self, var_or_id, target_type):

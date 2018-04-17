@@ -42,21 +42,17 @@ def eval_op(op:Operator, lhs:Value, rhs=None):
     if lhs.type == ValType.VOID or (rhs is not None and rhs.type == ValType.VOID):
         raise CompileError("Need value type")
 
-    if lhs.type == ValType.STR or (rhs is not None and rhs.type == ValType.VOID):
-        raise CompileError("Cannot evaluate string operations")
-
-
-    if op >= Operator.EQ and op < Operator.LBRA: # boolean operators
+    if op.value >= Operator.EQ.value and op.value < Operator.LBRA.value: # boolean operators
         rettype = ValType.BOOL
 
     elif rhs:
-        rettype = max(lhs.type, rhs.type)
+        rettype = ValType(max(lhs.type.value, rhs.type.value))
 
     else:
         rettype = lhs.type
 
-    if op < Operator.EQ:
-        rettype = max(rettype, ValType.CHAR)
+    if op.value < Operator.EQ.value:
+        rettype = ValType(max(rettype.value, ValType.CHAR.value))
 
     try:
         evalfunc = OpEvalLoc[op]
