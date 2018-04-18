@@ -1,8 +1,10 @@
 """ Convert pycsl.IR ==> LLVM.IR
 """
 
+import numpy as np
 import struct 
 
+from ..grammar.basic_types import SizeofLoc
 from ..translate import Translater, ValType, Value
 from ..ir import Block, Array, Identifier, MemoryLoc, Code, TAC, Pointer, Label
 from ..util.ioutil import StrWriter
@@ -77,12 +79,29 @@ class LLConverter:
     def format_global_var(self, name:str, value:Value):
         """ 
         """
+
+        def format_array(arr, arrtype):
+            ret = self.format_type(arrtype) + ' '
+            if np.sum(arr) == 0:
+                return ret + 'zeroinitializer'
+            elif len(arr.shape) == 1:
+                return ret + '[' + ', '.join([self.format_var_with_type(Value(arrtype.type, v)) for v in arr]) + ']'
+            else:
+                return ret + '[' + ', '.join([format_array(a, arrtype.type) for a in arr]) + ']'
+            
+
         if not isinstance(value.type, Array):
             self.writeln('@%s = global %s %s',
                 name,
                 self.format_type(value.type),
                 str(value.val)
             )
+        else:
+            self.writeln('@%s = global %s, align %d',
+                name, 
+                format_array(value.val, value.type), 
+                min(16, max(4, self.get_space(value.type))))
+            
 
     def format_block(self, signature, function:Block):
         
@@ -126,9 +145,10 @@ class LLConverter:
 
         elif tac.code == Code.ALLOC:
 
-            self.writeln('%s = alloca %s',
+            self.writeln('%s = alloca %s, align %d',
                 self.format_id(tac.ret),
-                self.format_type(tac.first)
+                self.format_type(tac.first),
+                min(16, max(4, self.get_space(tac.first)))
             )
 
         elif tac.code == Code.LOAD:
@@ -255,6 +275,17 @@ class LLConverter:
                 return i
 
         raise RuntimeError('Cannot find label at address: %r' % code_idx)
+
+    def get_space(self, tp):
+        
+        if isinstance(tp, Pointer):
+            return 4
+        elif isinstance(tp, ValType):
+            return SizeofLoc[tp]
+        elif isinstance(tp, Array):
+            return self.get_space(tp.type) * tp.size
+        else:
+            raise RuntimeError('Unrecognized type: %r', str(tp))
 
     def format_code(self, code:Code):
         return code.name.lower()

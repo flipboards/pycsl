@@ -20,6 +20,13 @@ class ValType(Enum):
 
 TypenameLoc = dict(zip(typenames, ValType))
 
+SizeofLoc = {
+    ValType.BOOL: 1,
+    ValType.CHAR: 1,
+    ValType.INT: 4,
+    ValType.FLOAT: 4
+}
+
 class Value:
     """ Represent an immediate value (like a number/char/string)
     """

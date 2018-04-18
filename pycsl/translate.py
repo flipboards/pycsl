@@ -361,7 +361,10 @@ class Translater:
             """
             subarray = [Value(ValType.INT, 0)]
             valarr = translate_subscript(mast, subarray)
-            valptr = self.create_reg(Pointer(self.get_vartype(valarr).unref_type().type))
+            typeelem = self.get_vartype(valarr)
+            for i in range(len(subarray)):
+                typeelem = typeelem.type
+            valptr = self.create_reg(Pointer(typeelem))
             self.write(Code.GETPTR, valptr, valarr, subarray)  # %valptr = getptr %valarr %subarray
             return valptr
 
@@ -523,7 +526,7 @@ class Translater:
         if not varid:
 
             if varname in self.global_sym_table:
-                varid = Identifier(varname)
+                varid = Identifier(MemoryLoc.GLOBAL, varname)
             else:
                 raise CompileError('Variable %s not defined' % varname)
 
@@ -589,12 +592,9 @@ class Translater:
             arrshape = []
             for node in mast.nodes:
                 newdimlen = self._eval_expr(node)
-                if newdimlen.type != ValType.INT:
-                    # type cast / raise error
-                    pass 
-                newlen = newdimlen.val  # this should be int
+                newlen = int(newdimlen.val)  # this should be int
                 arrshape.append(newlen)
-                return arrshape
+            return arrshape
 
         def translate_init_list(mast, coord, inits, requireconst=False):
             """ Translation initialzation list.
@@ -640,7 +640,7 @@ class Translater:
                     if c >= s:
                         raise CompileError("Too much value in initialization list")
 
-                inits.append((coord, val))
+                inits.append((cvt_coord, val))
             return inits
 
         assert ast.type == ASTType.DECL and ast.value == DeclNode.DECLELEM
@@ -673,6 +673,8 @@ class Translater:
             if not arrshape:
                 if len(ast.nodes) > 1:
                     initializer = self._eval_expr(ast.nodes[1]) # may require type cast
+                    if initializer.type != typename:
+                        initializer = self._translate_typecast(initializer, typename)
                 else:
                     initializer = Value(vartype, 0)
             else:
@@ -683,8 +685,7 @@ class Translater:
                 initializer = Value(vartype, init_array)
 
             self.global_sym_table[varname] = Register(Pointer(vartype))
-            initialzer_cast = initializer if initializer.type == typename else self._translate_typecast(initializer, typename)
-            self.global_values[varname] = initialzer_cast
+            self.global_values[varname] = initializer
 
         else:
 
@@ -733,7 +734,7 @@ class Translater:
         elif src_type == ValType.VOID and isinstance(target_type, ValType):
             return Value(src_type, target_type)
 
-        else:
+        elif src_type == ValType.VOID:
             raise CompileError('Cannot cast type "void" to "%s"' % target_type)
 
         # var_or_id.type 
